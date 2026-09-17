@@ -1,0 +1,23 @@
+id = "asumaran.asgitlog"
+name = "asgitlog"
+version = "0.1.0"
+min_herdr_version = "0.7.5"
+description = "Browse the git history of the focused pane's repository with a delta-rendered diff preview"
+platforms = ["macos"]
+
+[[build]]
+command = ["scripts/fetch-binary.sh"]
+
+[[actions]]
+id = "open"
+title = "Open git log browser"
+contexts = ["global"]
+command = ["scripts/open-pane.sh"]
+
+[[panes]]
+id = "log"
+title = "Git log"
+placement = "popup"
+width = "85%"
+height = "80%"
+command = ["./asgitlog"]

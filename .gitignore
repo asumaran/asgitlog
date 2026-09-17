@@ -1,0 +1,10 @@
+# Compiled binary (built locally or in CI; attached to GitHub Releases as an asset).
+/asgitlog
+asgitlog-darwin-*
+asgitlog-linux-*
+
+# Release staging
+/dist/
+
+# macOS
+.DS_Store
