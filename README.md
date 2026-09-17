@@ -59,9 +59,8 @@ in the row (hash, author, email, subject, refs, date), ignoring case, and all
 of them must match. Prefix a word with `~` to match it fuzzily (`~prvw` finds
 "preview"). Commits always stay in log order.
 
-With the preview below, the list grows upwards from the input, like fzf: the
-newest commit is at the bottom and `↑` moves to older ones. With the preview
-on the side, the list reads top-down.
+The list starts right under the filter input with the newest commit and goes
+down the history.
 
 | Key | Action |
 | --- | --- |

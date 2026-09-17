@@ -497,12 +497,6 @@ const minColumnsW = 60
 // rows on a narrow terminal, without touching the saved setting.
 func (m *model) columns() bool { return m.prefs.layout == layoutColumns && m.width >= minColumnsW }
 
-// bottomUp reports the direction of the list. Stacked over the details it
-// grows upwards, like fzf's default layout: the newest commit (where the
-// selection starts) sits right above its details. Beside the details it reads
-// top-down, next to their header.
-func (m *model) bottomUp() bool { return !m.columns() }
-
 // The screen is four boxes: the repo summary, the filter input, the main box
 // (list and details, split by a divider) and the help.
 const (
@@ -574,16 +568,6 @@ func (m *model) listY() int { return mainY + 1 }
 // overList reports whether a screen cell is inside the list.
 func (m *model) overList(x, y int) bool {
 	return y >= m.listY() && y < m.listY()+m.listH() && x >= 1 && x <= m.listW()
-}
-
-// screenUp is the cursor step that moves the selection up the screen. The
-// bottom-up list has the newest commit (row 0) on its last line, so there
-// moving up the screen is moving down the log.
-func (m *model) screenUp() int {
-	if m.bottomUp() {
-		return +1
-	}
-	return -1
 }
 
 func (m *model) resize() {
@@ -1005,9 +989,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == modeList && m.overList(msg.X, msg.Y) {
 			switch msg.Button {
 			case tea.MouseWheelUp:
-				return m, m.moveCursor(m.screenUp())
+				return m, m.moveCursor(-1)
 			case tea.MouseWheelDown:
-				return m, m.moveCursor(-m.screenUp())
+				return m, m.moveCursor(+1)
 			}
 			return m, nil
 		}
@@ -1055,7 +1039,9 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.handlePickaxeKey(msg)
 	}
 
-	up := m.screenUp()
+	// The list reads top-down in both layouts, newest commit first, right
+	// under the filter input: up the screen is up the log.
+	const up = -1
 	switch {
 	case key.Matches(msg, m.keys.Newest):
 		return m, m.moveCursor(-m.rowCount())
@@ -1229,11 +1215,7 @@ func (m *model) handleClick(msg tea.MouseClickMsg) tea.Cmd {
 	if !m.overList(msg.X, msg.Y) {
 		return nil
 	}
-	y, h := m.listY(), m.listH()
-	i := m.top + msg.Y - y
-	if m.bottomUp() {
-		i = m.top + (y + h - 1 - msg.Y)
-	}
+	i := m.top + msg.Y - m.listY()
 	if i >= m.rowCount() || i == m.cursor {
 		return nil
 	}
@@ -1374,9 +1356,6 @@ func (m *model) listLines() []string {
 	}
 	for len(lines) < h {
 		lines = append(lines, strings.Repeat(" ", l.width))
-	}
-	if m.bottomUp() {
-		slices.Reverse(lines)
 	}
 	return lines
 }

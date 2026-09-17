@@ -173,9 +173,9 @@ UP, DOWN, RIGHT, ESC, ENTER, TAB, BACKSPACE = b"\x1b[A", b"\x1b[B", b"\x1b[C", b
 CTRL_A, CTRL_C, CTRL_G, CTRL_L, CTRL_O, CTRL_T, CTRL_Y, SHIFT_RIGHT = b"\x01", b"\x03", b"\x07", b"\x0c", b"\x0f", b"\x14", b"\x19", b"\x1b[1;2C"
 
 # Rows layout at 40 lines, four boxes: summary 0-2, input 3-5 (counter on its
-# top edge), main 6-36 (list 7-14 with the newest at 14, divider 15, details
+# top edge), main 6-36 (list 7-14, top-down with the newest at 7, divider 15, details
 # 16-35), help 37-39.
-INFO, COUNTER, INPUT, LIST_TOP, NEWEST, DIVIDER, BOTTOM, HELP = 1, 3, 4, 7, 14, 15, 36, 38
+INFO, COUNTER, INPUT, LIST_TOP, NEWEST, DIVIDER, BOTTOM, HELP = 1, 3, 4, 7, 7, 15, 36, 38
 
 # ---------- 1. the rows layout ----------
 print("== asgitlog pty driver (%dx%d) ==" % (COLS, ROWS))
@@ -185,10 +185,10 @@ t.pump(0.5)
 f0 = t.frame(); dump("initial frame (rows layout)", f0)
 check(f0[0].startswith("╭─") and f0[INFO].startswith("│ ") and f0[INFO].rstrip("│ ").endswith("/repo  main") and f0[2].startswith("╰─"), "repo summary in its own box: %r" % f0[INFO][-40:])
 check(all(len(l) == COLS for l in f0), "every line spans the full width")
-check(f0[NEWEST].startswith("│▌ " + HEAD + " Ada Lovelace Merge branch 'side'"), "bottom-up list, wide row: hash, author, subject (no email)")
+check(f0[NEWEST].startswith("│▌ " + HEAD + " Ada Lovelace Merge branch 'side'"), "newest commit first, wide row: hash, author, subject (no email)")
 check(re.search(r"  HEAD -> main \d\d/\d\d/\d{4}│$", f0[NEWEST]) is not None, "refs take what they need, right before the date: %r" % f0[NEWEST][-32:])
-check(f0[NEWEST - 1].startswith("│  " + SIDE + " Ada Lovelace feat: side work") and "side" in f0[NEWEST - 1][-21:], "older commits go up")
-check("tag: v1.0" in f0[NEWEST - 3], "tag decoration on its commit")
+check(f0[NEWEST + 1].startswith("│  " + SIDE + " Ada Lovelace feat: side work") and "side" in f0[NEWEST + 1][-21:], "older commits go down")
+check("tag: v1.0" in f0[NEWEST + 3], "tag decoration on its commit")
 check(counter(f0, "%d/%d" % (ON_MAIN, ON_MAIN)) and f0[INPUT].startswith("│ " + PROMPT), "input box above the list, counter on its edge")
 check(f0[LIST_TOP - 1].startswith("╭─") and f0[DIVIDER].startswith("├─ auto: side-by-side ─") and f0[DIVIDER].endswith("─┤"), "list and details share a box; the divider says auto resolved to side-by-side")
 check(all(l.startswith("│ ") and l.endswith(" │") for l in f0[DIVIDER + 1:BOTTOM]) and f0[BOTTOM].startswith("╰"), "details framed with padding")
@@ -196,11 +196,11 @@ check(has(f0, "Merge:  ") and has(f0, "diff against the first parent") and has(f
 check(f0[HELP - 1].startswith("╭─") and f0[HELP].startswith("│ type filter") and "? help" in f0[HELP] and f0[HELP + 1].startswith("╰─"), "help in its own box: %r" % f0[HELP][:60])
 check(b"\x1b[?1049h" in t.raw, "alt screen entered")
 
-t.send(UP); t.send(UP)
-check(t.wait_for("Body of commit 59."), "up moves to older commits and the preview follows")
+t.send(DOWN); t.send(DOWN)
+check(t.wait_for("Body of commit 59."), "down moves to older commits and the preview follows")
 t.pump(0.6)
 f = t.frame()
-check(f[NEWEST - 2].startswith("│▌ " + C59), "marker two lines above the newest")
+check(f[NEWEST + 2].startswith("│▌ " + C59), "marker two lines below the newest")
 check(has(f, "── 1 file changed  +16 -16 ─") and sum(l.count("│") for l in f) > 40, "titled file list and side-by-side panels")
 check(re.search(r" \d+/\d+ ─╯$", f[BOTTOM]) is not None, "scroll position on the main box's bottom edge: %r" % f[BOTTOM][-16:])
 
@@ -212,22 +212,22 @@ check(after[INPUT] == before[INPUT] and after[LIST_TOP:DIVIDER] == before[LIST_T
 check(after[DIVIDER + 1:BOTTOM] != before[DIVIDER + 1:BOTTOM], "wheel: details scrolled")
 check(after[DIVIDER].startswith("├─ auto: side-by-side  " + C59 + " feat: change number 59 ─"), "scrolled: the commit shows on the divider: %r" % after[DIVIDER][:60])
 
-t.send(b"\x1b[<0;20;%dM\x1b[<0;20;%dm" % (NEWEST, NEWEST))   # 1-based: the line above the newest
-check(t.frame()[NEWEST - 1].startswith("│▌ " + SIDE), "left click selects the row under the pointer")
+t.send(b"\x1b[<0;20;%dM\x1b[<0;20;%dm" % (NEWEST + 2, NEWEST + 2))   # 1-based: the line below the newest
+check(t.frame()[NEWEST + 1].startswith("│▌ " + SIDE), "left click selects the row under the pointer")
 
 # the wheel over the list walks the history; home comes back to the newest
-t.send(b"\x1b[<64;20;10M" * 3, settle=0.6)   # wheel up = up the screen = older, in this layout
+t.send(b"\x1b[<65;20;10M" * 3, settle=0.6)   # wheel down over the list = older
 check("feat: change number 57" in (selected(t.frame()) or [""])[0], "wheel over the list moves the selection: %r" % (selected(t.frame()) or [""])[0][:50])
-t.send(b"\x1b[<64;20;10M" * 40, settle=0.8)
+t.send(b"\x1b[<65;20;10M" * 40, settle=0.8)
 check("feat: change number 17" in (selected(t.frame()) or [""])[0], "a long wheel burst scrolls far down the history")
 t.send(b"\x1b[H", settle=0.6)
 check(t.frame()[NEWEST].startswith("│▌ " + HEAD), "home jumps back to the newest commit")
 t.send(b"\x1b[F", settle=0.6)
 check("feat: change number 00" in (selected(t.frame()) or [""])[0], "end jumps to the oldest")
-t.send(b"\x1b[1;3B", settle=0.6)   # alt+down, for keyboards without home/end
-check(t.frame()[NEWEST].startswith("│▌ " + HEAD), "alt+down reaches the bottom of the list (the newest, in this layout)")
-t.send(b"\x1b[1;3A", settle=0.6)
-check("feat: change number 00" in (selected(t.frame()) or [""])[0], "alt+up reaches the top of the list")
+t.send(b"\x1b[1;3A", settle=0.6)   # alt+up, for keyboards without home/end
+check(t.frame()[NEWEST].startswith("│▌ " + HEAD), "alt+up reaches the top of the list (the newest)")
+t.send(b"\x1b[1;3B", settle=0.6)
+check("feat: change number 00" in (selected(t.frame()) or [""])[0], "alt+down reaches the bottom of the list (the oldest)")
 t.send(b"\x1b[H", settle=0.6)
 
 # ---------- 2. filter ----------
@@ -345,7 +345,7 @@ t = Term(REPO)
 check(t.wait_for("Working tree"), "uncommitted changes get a row of their own")
 t.pump(0.6)
 f = t.frame()
-check(f[NEWEST].startswith("│▌ *") and "Uncommitted changes (2 files)" in f[NEWEST] and HEAD in f[NEWEST - 1], "on top of the newest commit: %r" % f[NEWEST][:50])
+check(f[NEWEST].startswith("│▌ *") and "Uncommitted changes (2 files)" in f[NEWEST] and HEAD in f[NEWEST + 1], "on top of the newest commit: %r" % f[NEWEST][:50])
 check(has(f, "── 1 file changed  +1 -0 ─") and has(f, "── 1 untracked ─") and has(f, "    scratch.txt") and has(f, "one more line"), "its preview is the diff against HEAD")
 t.send(ESC); t.wait_exit()
 git("checkout", "-q", "--", "file.txt"); os.remove(os.path.join(REPO, "scratch.txt"))

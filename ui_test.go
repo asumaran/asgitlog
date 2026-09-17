@@ -126,7 +126,7 @@ func TestGeometry(t *testing.T) {
 	}
 }
 
-func TestRowsLayoutIsBottomUp(t *testing.T) {
+func TestRowsLayout(t *testing.T) {
 	m := testModel(t, 5)
 	ls := lines(m)
 	// Four boxes: summary, input (counter on its top edge), main, help.
@@ -140,27 +140,28 @@ func TestRowsLayoutIsBottomUp(t *testing.T) {
 			t.Errorf("line %d is %d cells wide: %q", i, ansi.StringWidth(l), l)
 		}
 	}
-	last := m.listY() + m.listH() - 1
-	if m.listY() != 7 || !strings.HasPrefix(ls[last], "│▌ 0000000") || !strings.HasPrefix(ls[last-1], "│  0000001") {
-		t.Errorf("newest commit should sit right above the divider:\n%s\n%s", ls[last-1], ls[last])
+	// Top-down: the newest commit right under the input box, older ones below.
+	first, last := m.listY(), m.listY()+m.listH()-1
+	if first != 7 || !strings.HasPrefix(ls[first], "│▌ 0000000") || !strings.HasPrefix(ls[first+1], "│  0000001") {
+		t.Errorf("newest commit should be the first list line:\n%s\n%s", ls[first], ls[first+1])
 	}
-	if strings.Trim(ls[m.listY()], " │") != "" {
-		t.Errorf("a short list leaves the top of the list area blank: %q", ls[m.listY()])
+	if strings.Trim(ls[last], " │") != "" {
+		t.Errorf("a short list leaves the bottom of the list area blank: %q", ls[last])
 	}
 	if !strings.HasPrefix(ls[last+1], "├─ delta not found") || !strings.HasSuffix(ls[last+1], "─┤") || !strings.HasPrefix(ls[last+2], "│ commit ") {
 		t.Errorf("the divider and the details go below the list:\n%s\n%s", ls[last+1], ls[last+2])
 	}
-	press(m, "up")
+	press(m, "down")
 	if m.cursor != 1 {
-		t.Errorf("up should move to the older commit above, cursor=%d", m.cursor)
+		t.Errorf("down should move to the older commit below, cursor=%d", m.cursor)
 	}
-	press(m, "down", "down")
+	press(m, "up", "up")
 	if m.cursor != 0 {
-		t.Errorf("down should come back to the newest, cursor=%d", m.cursor)
+		t.Errorf("up should come back to the newest, cursor=%d", m.cursor)
 	}
-	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 10, Y: last - 3})
+	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 10, Y: first + 3})
 	if m.cursor != 3 {
-		t.Errorf("click on the fourth line from the bottom should select row 3, got %d", m.cursor)
+		t.Errorf("click on the fourth list line should select row 3, got %d", m.cursor)
 	}
 	for _, y := range []int{1, 4, last + 1, last + 10} { // summary, input, divider, details
 		m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 10, Y: y})
@@ -207,7 +208,7 @@ func TestColumnsLayoutIsTopDown(t *testing.T) {
 
 func TestLayoutTogglePersistsAndKeepsCommit(t *testing.T) {
 	m := testModel(t, 100)
-	press(m, "up", "up", "up", "pgup")
+	press(m, "down", "down", "down", "pgdown")
 	want := m.current().hash
 	if m.cursor != 3+m.listH() {
 		t.Fatalf("cursor = %d", m.cursor)
@@ -300,10 +301,10 @@ func TestFilterFlow(t *testing.T) {
 	if line := lines(m)[infoBoxH]; !strings.HasSuffix(line, "─ 12/200 ─╮") {
 		t.Errorf("counter on the input box: %q", line)
 	}
-	press(m, "up")
+	press(m, "down")
 	keep := m.current().hash
 	if m.current().subject() != "commit number 115" {
-		t.Errorf("up should move within the hits, on %q", m.current().subject())
+		t.Errorf("down should move within the hits, on %q", m.current().subject())
 	}
 	for range len("number 15") {
 		press(m, "backspace")
@@ -349,7 +350,7 @@ func TestPreviewSingleFlightAndPrefetch(t *testing.T) {
 	}
 	cancelled := false
 	m.cancelRender = func() { cancelled = true }
-	press(m, "up")
+	press(m, "down")
 	b := keyAt(m, 1)
 	if !cancelled || m.inflight != a || m.wantKey != b {
 		t.Fatalf("moving on must cancel, not stack: cancelled=%v inflight=%q", cancelled, m.inflight)
@@ -376,7 +377,7 @@ func TestPreviewSingleFlightAndPrefetch(t *testing.T) {
 	if _, ok := m.renders[keyAt(m, 3)]; ok {
 		t.Error("prefetch must stop at the direct neighbors")
 	}
-	press(m, "up")
+	press(m, "down")
 	if !strings.Contains(screen(m), "BODY OF "+keyAt(m, 2)) || strings.Contains(screen(m), "rendering…") {
 		t.Errorf("a prefetched neighbor should show instantly:\n%s", screen(m))
 	}
@@ -646,15 +647,14 @@ func TestBackToTheNewestCommit(t *testing.T) {
 	if m.cursor != 299 {
 		t.Errorf("end should select the oldest commit, cursor=%d", m.cursor)
 	}
-	// For keyboards without home/end: alt+arrows, by screen direction. The
-	// rows layout is bottom-up, so the newest commit is at the bottom.
-	press(m, "alt+down")
-	if m.cursor != 0 {
-		t.Errorf("rows: alt+down should reach the bottom of the list (newest), cursor=%d", m.cursor)
-	}
+	// For keyboards without home/end: alt+arrows to the ends of the list.
 	press(m, "alt+up")
+	if m.cursor != 0 {
+		t.Errorf("alt+up should reach the top of the list (newest), cursor=%d", m.cursor)
+	}
+	press(m, "alt+down")
 	if m.cursor != 299 {
-		t.Errorf("rows: alt+up should reach the top of the list (oldest), cursor=%d", m.cursor)
+		t.Errorf("alt+down should reach the bottom of the list (oldest), cursor=%d", m.cursor)
 	}
 	press(m, "ctrl+l", "alt+up")
 	if m.cursor != 0 {
@@ -663,17 +663,17 @@ func TestBackToTheNewestCommit(t *testing.T) {
 	press(m, "ctrl+l")
 
 	// The wheel over the list moves the selection; elsewhere it scrolls the
-	// diff. Rows layout: up the screen is down the log.
+	// diff.
 	wheel := func(b tea.MouseButton, x, y int) { m.Update(tea.MouseWheelMsg{Button: b, X: x, Y: y}) }
 	y := m.listY() + 2
-	wheel(tea.MouseWheelUp, 10, y)
-	wheel(tea.MouseWheelUp, 10, y)
-	if m.cursor != 2 {
-		t.Errorf("rows: wheel up over the list should go to older commits, cursor=%d", m.cursor)
-	}
 	wheel(tea.MouseWheelDown, 10, y)
+	wheel(tea.MouseWheelDown, 10, y)
+	if m.cursor != 2 {
+		t.Errorf("rows: wheel down over the list should go to older commits, cursor=%d", m.cursor)
+	}
+	wheel(tea.MouseWheelUp, 10, y)
 	if m.cursor != 1 {
-		t.Errorf("rows: wheel down should come back, cursor=%d", m.cursor)
+		t.Errorf("rows: wheel up should come back, cursor=%d", m.cursor)
 	}
 	settle(m)
 	body := strings.Repeat("line\n", 200)

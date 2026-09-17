@@ -98,15 +98,16 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   mode, plus the commit once its header scrolled away; the main box's bottom
   edge carries `line/total`. Details have a cell of padding, list rows use
   their own 2-cell gutter.
-  - Rows layout (details below, horizontal `├─┤` divider): the list is drawn
-    BOTTOM-UP like fzf's default (row 0, the newest commit, on the last list
-    line, right above the divider and so next to its details; `up` is
-    cursor+1), even though the input sits above it. Wide rows: hash, author (as wide as
+  - The list reads TOP-DOWN in both layouts: row 0, the newest commit, is the
+    first line, right under the filter input. (A bottom-up list like fzf's
+    default was tried while the input sat below the list; with the input on
+    top it read backwards and was dropped.)
+  - Rows layout (details below, horizontal `├─┤` divider). Wide rows: hash, author (as wide as
     the longest name loaded, max 15), subject, refs (only the room they need,
     up to 45% of the subject area, right-aligned against the date), date. No
     email column; it stays searchable. A narrow list drops the author.
   - Columns layout (details beside, vertical divider tied into the edges with
-    `┬`/`┴`): the list reads TOP-DOWN, next to the details' header. Compact rows: hash,
+    `┬`/`┴`). Compact rows: hash,
     relative date, subject. Falls back to rows under 60 columns without
     touching the saved setting.
   - `shift+←/→` moves the divider in 5% steps (30-85% for the preview),
@@ -199,13 +200,12 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   on the commit that was found, which can be thousands of rows down, so
   `home`/`end` jump to the newest/oldest commit (taken from the filter input's
   caret on purpose: `←`/`→` and `ctrl+e` still move it), `alt+↑`/`alt+↓` jump
-  to the top/bottom of the list BY SCREEN DIRECTION (compact Mac keyboards
+  to the top/bottom of the list, which is the same thing (compact Mac keyboards
   have no home/end keys, only `fn+←/→`, which not every terminal passes on;
   this is the pair the help line advertises), and the wheel over the list
   walks the history.
 - **Mouse**: the wheel is routed by pointer position: over the list
-  (`overList`) it moves the selection one row per report, in screen direction
-  (`screenUp`, since the rows layout is bottom-up); anywhere else it scrolls
+  (`overList`) it moves the selection one row per report; anywhere else it scrolls
   the diff. gotopr dropped this routing because trackpad inertia drifting
   across its two columns misrouted events; here the list needs a mouse way
   back up, and the stray event just moves the selection a row. A left click
