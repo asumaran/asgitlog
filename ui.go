@@ -1,17 +1,21 @@
 package main
 
-// The bubbletea model. Browsing (modeList): a filter input on top, the commit
-// list and the preview (stacked in the rows layout, side by side in the
-// columns layout), then the repo summary and the key help. Enter opens the
-// same preview full screen (modeFull) with pager keys and a text search
-// (modeSearch is its input line).
+// The bubbletea model. Browsing (modeList): the repo summary, the commit list
+// with the filter input and the preview box (stacked in the rows layout, side
+// by side in the columns layout), then the key help. Enter opens the same
+// preview full screen (modeFull) with pager keys, commit-to-commit navigation
+// and a text search (modeSearch is its input line). modePickaxe is the input
+// of the content search that rescopes the log. `?` expands the help line
+// into bubbles' full help in place.
 
 import (
 	"context"
 	"os"
+	"os/exec"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -46,6 +50,10 @@ var (
 	stTitle  = lipgloss.NewStyle().Bold(true)
 	stError  = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
 	stLabel  = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	stInfo   = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
+	stScope  = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+	stCount  = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	stFlash  = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 	stFound  = lipgloss.NewStyle().Reverse(true)
 
 	// list columns and preview header, after git's own palette
@@ -55,6 +63,8 @@ var (
 	stKey       = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	stAdded     = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	stDeleted   = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	stMerge     = lipgloss.NewStyle().Faint(true)
+	stWorkTree  = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Italic(true)
 	stRefHead   = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
 	stRefBranch = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
 	stRefRemote = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
@@ -66,36 +76,83 @@ var (
 
 type listKeys struct {
 	Filter   key.Binding
+	Fuzzy    key.Binding
 	Up       key.Binding
 	Down     key.Binding
 	PageUp   key.Binding
 	PageDown key.Binding
+	Newest   key.Binding
+	Oldest   key.Binding
+	ListTop  key.Binding
+	ListEnd  key.Binding
 	Open     key.Binding
-	DiffMode key.Binding
-	Layout   key.Binding
+	NextFile key.Binding
+	PrevFile key.Binding
 	PrevUp   key.Binding
 	PrevDown key.Binding
+	DiffMode key.Binding
+	Layout   key.Binding
+	Shrink   key.Binding
+	Grow     key.Binding
+	All      key.Binding
+	Pickaxe  key.Binding
+	Copy     key.Binding
+	Browse   key.Binding
+	Help     key.Binding
 	Quit     key.Binding
 }
 
 func (k listKeys) ShortHelp() []key.Binding {
-	return []key.Binding{k.Filter, k.Up, k.Open, k.DiffMode, k.Layout, k.PrevDown, k.Quit}
+	return []key.Binding{k.Filter, k.Up, k.ListTop, k.Open, k.DiffMode, k.Layout, k.Help, k.Quit}
 }
-func (k listKeys) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp()} }
+
+// FullHelp is what `?` expands the help line into: bubbles lays each group out
+// as a column.
+func (k listKeys) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Filter, k.Fuzzy, k.Up, k.PageUp, k.ListTop},
+		{k.Newest, k.Open, k.NextFile, k.PrevFile, k.PrevUp},
+		{k.Shrink, k.Layout, k.DiffMode, k.All, k.Pickaxe},
+		{k.Copy, k.Browse, k.Help, k.Quit},
+	}
+}
+
+// helpOnly is the key of entries that only document something (typing,
+// scrolling handled by the viewport): bubbles' help skips bindings without
+// keys, so they need one that never matches.
+const helpOnly = "help-only"
 
 func defaultListKeys() listKeys {
 	return listKeys{
-		// Help-only entry; it needs a key to count as enabled.
-		Filter:   key.NewBinding(key.WithKeys("type"), key.WithHelp("type", "filter")),
+		Filter:   key.NewBinding(key.WithKeys(helpOnly), key.WithHelp("type", "filter")),
+		Fuzzy:    key.NewBinding(key.WithKeys(helpOnly), key.WithHelp("~word", "fuzzy filter word")),
 		Up:       key.NewBinding(key.WithKeys("up", "ctrl+p"), key.WithHelp("↑/↓", "move")),
 		Down:     key.NewBinding(key.WithKeys("down", "ctrl+n")),
-		PageUp:   key.NewBinding(key.WithKeys("pgup"), key.WithHelp("pgup", "page up")),
-		PageDown: key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("pgdn", "page down")),
+		PageUp:   key.NewBinding(key.WithKeys("pgup"), key.WithHelp("pgup/pgdn", "move a page")),
+		PageDown: key.NewBinding(key.WithKeys("pgdown")),
+		// home/end would otherwise move the caret of the filter input, which
+		// left/right and ctrl+e already do; the list needs them more.
+		Newest: key.NewBinding(key.WithKeys("home", "ctrl+home"), key.WithHelp("home/end", "newest/oldest")),
+		Oldest: key.NewBinding(key.WithKeys("end", "ctrl+end")),
+		// Laptop keyboards have no home/end (fn+←/→ sends them, when the
+		// terminal lets it through), so the ends of the list are also on
+		// alt+arrows, by screen direction.
+		ListTop:  key.NewBinding(key.WithKeys("alt+up"), key.WithHelp("⌥↑/⌥↓", "top/bottom")),
+		ListEnd:  key.NewBinding(key.WithKeys("alt+down")),
 		Open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "full diff")),
+		NextFile: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next file")),
+		PrevFile: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab", "previous file")),
+		PrevUp:   key.NewBinding(key.WithKeys("shift+up"), key.WithHelp("⇧↑/⇧↓", "scroll the diff")),
+		PrevDown: key.NewBinding(key.WithKeys("shift+down")),
 		DiffMode: key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("^t", "diff mode")),
 		Layout:   key.NewBinding(key.WithKeys("ctrl+l"), key.WithHelp("^l", "layout")),
-		PrevUp:   key.NewBinding(key.WithKeys("shift+up"), key.WithHelp("⇧↑", "")),
-		PrevDown: key.NewBinding(key.WithKeys("shift+down"), key.WithHelp("⇧↑/⇧↓", "scroll diff")),
+		Shrink:   key.NewBinding(key.WithKeys("shift+left"), key.WithHelp("⇧←/⇧→", "resize the list")),
+		Grow:     key.NewBinding(key.WithKeys("shift+right")),
+		All:      key.NewBinding(key.WithKeys("ctrl+a"), key.WithHelp("^a", "all refs / current branch")),
+		Pickaxe:  key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("^g", "search the diffs (git log -S)")),
+		Copy:     key.NewBinding(key.WithKeys("ctrl+y"), key.WithHelp("^y", "copy the hash")),
+		Browse:   key.NewBinding(key.WithKeys("ctrl+o"), key.WithHelp("^o", "open the commit in the browser")),
+		Help:     key.NewBinding(key.WithKeys("f1"), key.WithHelp("?", "help")),
 		Quit:     key.NewBinding(key.WithKeys("esc", "ctrl+c"), key.WithHelp("esc", "quit")),
 	}
 }
@@ -103,35 +160,53 @@ func defaultListKeys() listKeys {
 type fullKeys struct {
 	Scroll   key.Binding
 	Page     key.Binding
-	Ends     key.Binding
 	Top      key.Binding
 	Bottom   key.Binding
-	DiffMode key.Binding
+	Older    key.Binding
+	Newer    key.Binding
+	NextFile key.Binding
+	PrevFile key.Binding
 	Search   key.Binding
 	Next     key.Binding
 	Prev     key.Binding
+	DiffMode key.Binding
+	Copy     key.Binding
+	Browse   key.Binding
+	Help     key.Binding
 	Back     key.Binding
 	Quit     key.Binding
 }
 
 func (k fullKeys) ShortHelp() []key.Binding {
-	return []key.Binding{k.Scroll, k.Page, k.Ends, k.Search, k.Next, k.DiffMode, k.Back}
+	return []key.Binding{k.Scroll, k.Older, k.NextFile, k.Search, k.Help, k.Back}
 }
-func (k fullKeys) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp()} }
+
+func (k fullKeys) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Scroll, k.Page, k.Top, k.Older},
+		{k.NextFile, k.PrevFile, k.Search, k.Next},
+		{k.DiffMode, k.Copy, k.Browse},
+		{k.Help, k.Back},
+	}
+}
 
 func defaultFullKeys() fullKeys {
 	return fullKeys{
-		// Help-only entries (scrolling is the viewport's own key map). They
-		// need a key to count as enabled, or the help skips them.
-		Scroll:   key.NewBinding(key.WithKeys("help"), key.WithHelp("↑↓/jk", "scroll")),
-		Page:     key.NewBinding(key.WithKeys("help"), key.WithHelp("space/b", "page")),
-		Ends:     key.NewBinding(key.WithKeys("help"), key.WithHelp("g/G", "ends")),
-		Top:      key.NewBinding(key.WithKeys("g", "home")),
+		Scroll:   key.NewBinding(key.WithKeys(helpOnly), key.WithHelp("↑↓/jk", "scroll")),
+		Page:     key.NewBinding(key.WithKeys(helpOnly), key.WithHelp("space/b, d/u", "page, half page")),
+		Top:      key.NewBinding(key.WithKeys("g", "home"), key.WithHelp("g/G", "top / bottom")),
 		Bottom:   key.NewBinding(key.WithKeys("G", "end")),
-		DiffMode: key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("^t", "diff mode")),
+		Older:    key.NewBinding(key.WithKeys("]", "right"), key.WithHelp("[/]", "newer/older")),
+		Newer:    key.NewBinding(key.WithKeys("[", "left")),
+		NextFile: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next file")),
+		PrevFile: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab", "previous file")),
 		Search:   key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
-		Next:     key.NewBinding(key.WithKeys("n"), key.WithHelp("n/N", "match")),
+		Next:     key.NewBinding(key.WithKeys("n"), key.WithHelp("n/N", "next / previous match")),
 		Prev:     key.NewBinding(key.WithKeys("N")),
+		DiffMode: key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("^t", "diff mode")),
+		Copy:     key.NewBinding(key.WithKeys("y", "ctrl+y"), key.WithHelp("y", "copy the hash")),
+		Browse:   key.NewBinding(key.WithKeys("o", "ctrl+o"), key.WithHelp("o", "open the commit in the browser")),
+		Help:     key.NewBinding(key.WithKeys("?", "f1"), key.WithHelp("?", "help")),
 		Back:     key.NewBinding(key.WithKeys("q", "esc", "enter"), key.WithHelp("q/esc", "back")),
 		Quit:     key.NewBinding(key.WithKeys("ctrl+c")),
 	}
@@ -145,20 +220,31 @@ const (
 	modeList uiMode = iota
 	modeFull
 	modeSearch
+	modePickaxe
 	modeFatal // startup error shown inside the TUI (see main)
 )
 
 type repoInfoMsg repoInfo
 
+// flashMsg shows a short-lived status in place of the help line; clearFlashMsg
+// removes it unless a newer one replaced it.
+type flashMsg string
+type clearFlashMsg int
+
 type model struct {
 	// data
-	commits []commit
-	hashW   int // widest short hash loaded so far
-	loading bool
-	logErr  string
-	logCh   <-chan logBatch
-	stopLog context.CancelFunc
-	info    string // repo summary line
+	opts     logOpts
+	commits  []commit
+	hashW    int // widest short hash loaded so far
+	authorW  int // widest author name loaded so far, capped
+	loading  bool
+	logErr   string
+	logGen   int
+	logCh    <-chan logBatch
+	stopLog  context.CancelFunc
+	seekHash string // commit to land on again after the log restarted
+	info     string // repo summary line
+	webURL   string
 
 	// filter
 	query string // the query hits were computed for
@@ -167,11 +253,14 @@ type model struct {
 	// ui
 	mode     uiMode
 	fatal    string
+	flash    string
+	flashSeq int
 	prefs    prefs
-	cursor   int // index into the visible rows
-	top      int // first visible row
+	cursor   int // index into the visible rows; 0 is the newest commit
+	top      int // first row of the visible window
 	ti       textinput.Model
 	si       textinput.Model // full-view search input
+	pi       textinput.Model // content search (pickaxe) input
 	prevVP   viewport.Model
 	fullVP   viewport.Model
 	help     help.Model
@@ -183,13 +272,13 @@ type model struct {
 
 	// preview
 	deltaBin     string
-	renders      map[string]string
+	renders      map[string]render
+	failed       map[string]string // render errors, so they are shown once instead of retried
 	details      map[string]detail
 	wantKey      string // render the active viewport should show
 	shownKey     string // render whose final content it does show
 	inflight     string
 	cancelRender context.CancelFunc
-	renderErr    string
 
 	// full-view search
 	searchTerm string
@@ -197,12 +286,14 @@ type model struct {
 	matchIdx   int
 }
 
-func newModel(p prefs, deltaBin string) *model {
+func newModel(p prefs, deltaBin string, opts logOpts) *model {
 	m := &model{
+		opts:     opts,
 		loading:  true,
 		prefs:    p,
 		ti:       newInput(promptText()),
 		si:       newInput(stPrompt.Render("/")),
+		pi:       newInput(stPrompt.Render("search the diffs (-S) ❯ ")),
 		prevVP:   viewport.New(viewport.WithWidth(80), viewport.WithHeight(10)),
 		fullVP:   viewport.New(viewport.WithWidth(80), viewport.WithHeight(20)),
 		help:     help.New(),
@@ -211,7 +302,8 @@ func newModel(p prefs, deltaBin string) *model {
 		width:    120,
 		height:   40,
 		deltaBin: deltaBin,
-		renders:  map[string]string{},
+		renders:  map[string]render{},
+		failed:   map[string]string{},
 		details:  map[string]detail{},
 	}
 	m.ti.Focus()
@@ -237,6 +329,57 @@ func promptText() string {
 		return stPrompt.Render("asgitlog ❯ ")
 	}
 	return stPrompt.Render("asgitlog (") + stDev.Render("dev") + stPrompt.Render(") ❯ ")
+}
+
+// ---- log stream ----
+
+// startLog (re)starts the log for the current scope. Batches of a previous
+// stream are recognized by their generation and dropped.
+func (m *model) startLog() tea.Cmd {
+	if m.stopLog != nil {
+		m.stopLog()
+	}
+	if c := m.current(); c != nil {
+		m.seekHash = c.hash
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.logGen++
+	m.logCh, m.stopLog = streamLog(ctx, m.opts, m.logGen), cancel
+	m.commits, m.hits, m.hashW, m.authorW = nil, nil, 0, 0
+	m.cursor, m.top = 0, 0
+	m.loading, m.logErr = true, ""
+	return waitLog(m.logCh)
+}
+
+func waitLog(ch <-chan logBatch) tea.Cmd {
+	return func() tea.Msg {
+		b, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return b
+	}
+}
+
+func (m *model) addCommits(batch []commit) {
+	from := len(m.commits)
+	m.commits = append(m.commits, batch...)
+	for i := range batch {
+		m.hashW = max(m.hashW, len(batch[i].short()))
+		m.authorW = max(m.authorW, min(maxAuthorW, ansi.StringWidth(batch[i].author())))
+	}
+	if m.filtering() {
+		m.hits = append(m.hits, filterCommits(m.commits, nil, from, queryTerms(m.query))...)
+	}
+	if m.seekHash != "" {
+		for i := range batch {
+			if batch[i].hash == m.seekHash {
+				m.seekHash = ""
+				m.selectCommit(from + i)
+				break
+			}
+		}
+	}
 }
 
 // ---- visible rows ----
@@ -279,10 +422,28 @@ func (m *model) commitIndex() int {
 	return m.cursor
 }
 
+// selectCommit moves the cursor to the commit at m.commits[idx] when it is
+// visible, and reports whether it was.
+func (m *model) selectCommit(idx int) bool {
+	if idx < 0 {
+		return false
+	}
+	if !m.filtering() {
+		m.cursor = idx
+		return true
+	}
+	// hits are in log order, so sorted by idx
+	i, ok := slices.BinarySearchFunc(m.hits, idx, func(h hit, idx int) int { return h.idx - idx })
+	if ok {
+		m.cursor = i
+	}
+	return ok
+}
+
 // applyQuery recomputes the hits for the input's current value. The selection
 // stays on the same commit while it still matches (so deleting the query, even
 // one character at a time, ends on the commit that was found: a search doubles
-// as "take me there") and falls to the first hit otherwise, like fzf.
+// as "take me there") and falls to the first hit otherwise.
 func (m *model) applyQuery() {
 	q := m.ti.Value()
 	if q == m.query {
@@ -304,27 +465,8 @@ func (m *model) applyQuery() {
 	}
 	m.query = q
 	m.cursor, m.top = 0, 0
-	if keep >= 0 {
-		if !m.filtering() {
-			m.cursor = keep
-		} else if i, ok := slices.BinarySearchFunc(m.hits, keep, func(h hit, idx int) int { return h.idx - idx }); ok {
-			m.cursor = i // hits are in log order, so sorted by idx
-		}
-	}
+	m.selectCommit(keep)
 	m.clampCursor()
-}
-
-func (m *model) addCommits(batch []commit) {
-	from := len(m.commits)
-	m.commits = append(m.commits, batch...)
-	for i := range batch {
-		if w := len(batch[i].short()); w > m.hashW {
-			m.hashW = w
-		}
-	}
-	if m.filtering() {
-		m.hits = append(m.hits, filterCommits(m.commits, nil, from, queryTerms(m.query))...)
-	}
 }
 
 func (m *model) clampCursor() {
@@ -347,11 +489,6 @@ func (m *model) moveCursor(delta int) tea.Cmd {
 
 // ---- geometry ----
 
-const (
-	previewRowsPct    = 70
-	previewColumnsPct = 75
-)
-
 // minColumnsW is the narrowest terminal the side-by-side layout is used on;
 // below it the list share would not even fit the hash and date.
 const minColumnsW = 60
@@ -360,52 +497,114 @@ const minColumnsW = 60
 // rows on a narrow terminal, without touching the saved setting.
 func (m *model) columns() bool { return m.prefs.layout == layoutColumns && m.width >= minColumnsW }
 
-// bodyH is what is left between the input line and the two footer lines.
-func (m *model) bodyH() int { return max(3, m.height-3) }
+// bottomUp reports the direction of the list. Stacked over the details it
+// grows upwards, like fzf's default layout: the newest commit (where the
+// selection starts) sits right above its details. Beside the details it reads
+// top-down, next to their header.
+func (m *model) bottomUp() bool { return !m.columns() }
+
+// The screen is four boxes: the repo summary, the filter input, the main box
+// (list and details, split by a divider) and the help.
+const (
+	infoBoxH  = 3
+	inputBoxH = 3
+	mainY     = infoBoxH + inputBoxH // first screen line of the main box
+)
+
+// footH is the height of the help text: one line, or the full help bubbles
+// expands it into while `?` is on. The main box gives way. On a very short
+// terminal the help is cut rather than the main box squeezed out.
+func (m *model) footH() int {
+	if !m.help.ShowAll {
+		return 1
+	}
+	h := lipgloss.Height(m.help.View(m.keys))
+	if m.inFull() {
+		h = lipgloss.Height(m.help.View(m.fullKeys))
+	}
+	return max(1, min(h, m.height-mainY-2-6))
+}
+
+func (m *model) toggleHelp() tea.Cmd {
+	m.help.ShowAll = !m.help.ShowAll
+	m.resize()
+	return m.updatePreview()
+}
+
+// innerW is the width inside a box's borders.
+func (m *model) innerW() int { return max(20, m.width-2) }
+
+// mainH is the height inside the main box's borders.
+func (m *model) mainH() int { return max(4, m.height-mainY-(m.footH()+2)-2) }
+
+// detailsH and detailsW are the area of the commit details inside the main
+// box, including the cell of padding on each side.
+func (m *model) detailsH() int {
+	if m.columns() {
+		return m.mainH()
+	}
+	return min(max(2, m.mainH()*m.prefs.splitRows/100), m.mainH()-2)
+}
+
+func (m *model) detailsW() int {
+	if m.columns() {
+		return max(14, m.innerW()*m.prefs.splitColumns/100)
+	}
+	return m.innerW()
+}
 
 func (m *model) listH() int {
 	if m.columns() {
-		return m.bodyH()
+		return m.mainH()
 	}
-	return max(1, m.bodyH()-m.previewBlockH())
-}
-
-// previewBlockH is the rows-layout preview height, label line included.
-func (m *model) previewBlockH() int {
-	return min(max(2, m.bodyH()*previewRowsPct/100), m.bodyH()-1)
+	return max(1, m.mainH()-1-m.detailsH()) // minus the divider
 }
 
 func (m *model) listW() int {
 	if m.columns() {
-		return max(10, m.width-m.prevW()-3)
+		return max(10, m.innerW()-1-m.detailsW()) // minus the divider
 	}
-	return m.width
+	return m.innerW()
 }
 
-func (m *model) prevW() int {
-	if m.columns() {
-		return max(10, m.width*previewColumnsPct/100)
+// listY is the first screen line of the list, right under the main box's top
+// border.
+func (m *model) listY() int { return mainY + 1 }
+
+// overList reports whether a screen cell is inside the list.
+func (m *model) overList(x, y int) bool {
+	return y >= m.listY() && y < m.listY()+m.listH() && x >= 1 && x <= m.listW()
+}
+
+// screenUp is the cursor step that moves the selection up the screen. The
+// bottom-up list has the newest commit (row 0) on its last line, so there
+// moving up the screen is moving down the log.
+func (m *model) screenUp() int {
+	if m.bottomUp() {
+		return +1
 	}
-	return max(10, m.width)
+	return -1
 }
 
 func (m *model) resize() {
-	m.prevVP.SetWidth(m.prevW())
-	if m.columns() {
-		m.prevVP.SetHeight(max(1, m.bodyH()-1))
-	} else {
-		m.prevVP.SetHeight(max(1, m.previewBlockH()-1))
-	}
+	m.prevVP.SetWidth(max(10, m.detailsW()-2))
+	m.prevVP.SetHeight(max(1, m.detailsH()))
 	m.fullVP.SetWidth(max(10, m.width))
-	m.fullVP.SetHeight(max(1, m.height-2))
-	m.help.SetWidth(m.width)
+	m.fullVP.SetHeight(max(1, m.height-2-m.footH()))
+	m.help.SetWidth(max(0, m.width-4))
 	m.clampCursor()
+}
+
+func (m *model) rowLayout() rowLayout {
+	return rowLayout{width: m.listW(), hashW: m.hashW, authorW: m.authorW, compact: m.columns(), now: time.Now().Unix()}
 }
 
 // ---- preview ----
 
+func (m *model) inFull() bool { return m.mode == modeFull || m.mode == modeSearch }
+
 func (m *model) activeVP() *viewport.Model {
-	if m.mode == modeFull || m.mode == modeSearch {
+	if m.inFull() {
 		return &m.fullVP
 	}
 	return &m.prevVP
@@ -415,9 +614,11 @@ func (m *model) activeVP() *viewport.Model {
 // render cache when possible, otherwise the instant header plus a placeholder
 // while delta runs. Only one render is in flight at a time; a selection that
 // moved on cancels it and the newest one starts when the cancelled render
-// reports back, so holding an arrow key never piles up delta processes.
+// reports back, so holding an arrow key never piles up delta processes. Once
+// the selection is served, the neighbors are rendered ahead so that moving to
+// them is instant.
 func (m *model) updatePreview() tea.Cmd {
-	if !m.sized {
+	if !m.sized || m.mode == modeFatal {
 		return nil
 	}
 	vp := m.activeVP()
@@ -428,36 +629,68 @@ func (m *model) updatePreview() tea.Cmd {
 		return nil
 	}
 	w := vp.Width()
-	k := previewKey(c.hash, w, m.prefs.diff)
+	mode := effectiveDiff(m.prefs.diff, w)
+	k := previewKey(c.hash, w, mode)
 	if k != m.wantKey {
 		m.wantKey = k
-		m.renderErr = ""
 		m.clearSearch()
 		vp.GotoTop()
 	}
-	if content, ok := m.renders[k]; ok {
+	if r, ok := m.renders[k]; ok {
 		if m.shownKey != k {
 			m.shownKey = k
-			vp.SetContent(content)
+			vp.SetContent(r.content)
 		}
-		return nil
+		return m.prefetch(w, mode)
 	}
-	m.shownKey = ""
 	var d *detail
 	if known, ok := m.details[c.hash]; ok {
 		d = &known
 	}
+	if msg, ok := m.failed[k]; ok {
+		m.shownKey = k
+		vp.SetContent(previewHeader(c, d, w) + "\n\n" + stError.Render(msg))
+		return nil
+	}
+	m.shownKey = ""
 	vp.SetContent(previewHeader(c, d, w) + "\n\n" + stDim.Render("rendering…"))
+	return m.startRender(c, w, mode)
+}
+
+func (m *model) startRender(c *commit, w int, mode string) tea.Cmd {
+	k := previewKey(c.hash, w, mode)
 	if m.inflight == k {
 		return nil
 	}
 	if m.inflight != "" {
-		m.cancelRender()
+		m.cancelRender() // its report triggers updatePreview again
 		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.inflight, m.cancelRender = k, cancel
-	return renderPreviewCmd(ctx, *c, w, m.prefs.diff, m.deltaBin)
+	return renderPreviewCmd(ctx, *c, w, mode, m.deltaBin, m.opts.paths)
+}
+
+// prefetch renders the rows next to the cursor while nothing else is pending.
+func (m *model) prefetch(w int, mode string) tea.Cmd {
+	if m.inflight != "" {
+		return nil
+	}
+	for _, i := range []int{m.cursor + 1, m.cursor - 1} {
+		c, _ := m.rowAt(i)
+		if c == nil {
+			continue
+		}
+		k := previewKey(c.hash, w, mode)
+		if _, ok := m.renders[k]; ok {
+			continue
+		}
+		if _, ok := m.failed[k]; ok {
+			continue
+		}
+		return m.startRender(c, w, mode)
+	}
+	return nil
 }
 
 // maxRenders bounds the render cache; it is simply dropped when full (the
@@ -471,22 +704,17 @@ func (m *model) handlePreview(msg previewMsg) tea.Cmd {
 	}
 	switch {
 	case msg.cancelled:
-		// Fall through to updatePreview, which starts the render wanted now
-		// (possibly this same one again, after an A, B, A selection).
-	case msg.err == nil:
+		// updatePreview starts whatever is wanted now (possibly this same
+		// render again, after an A, B, A selection).
+	case msg.err != nil:
+		m.failed[msg.key] = msg.err.Error()
+	default:
 		if len(m.renders) >= maxRenders {
-			m.renders = map[string]string{}
-			m.details = map[string]detail{}
+			m.renders, m.details, m.failed = map[string]render{}, map[string]detail{}, map[string]string{}
+			m.shownKey = ""
 		}
-		m.renders[msg.key] = msg.content
+		m.renders[msg.key] = msg.render
 		m.details[msg.hash] = msg.detail
-	case msg.key == m.wantKey:
-		// A failure of the render still wanted (not a cancelled one).
-		m.renderErr = msg.err.Error()
-		m.shownKey = msg.key
-		c := m.current()
-		m.activeVP().SetContent(previewHeader(c, nil, m.activeVP().Width()) + "\n\n" + stError.Render(m.renderErr))
-		return nil
 	}
 	return m.updatePreview()
 }
@@ -496,6 +724,33 @@ func (m *model) handlePreview(msg previewMsg) tea.Cmd {
 func (m *model) resetPreview() tea.Cmd {
 	m.wantKey, m.shownKey = "", ""
 	return m.updatePreview()
+}
+
+// jumpFile scrolls the active viewport to the next (or previous) file of the
+// diff.
+func (m *model) jumpFile(dir int) {
+	r, ok := m.renders[m.wantKey]
+	if !ok || len(r.files) == 0 {
+		return
+	}
+	vp := m.activeVP()
+	y := vp.YOffset()
+	if dir > 0 {
+		for _, l := range r.files {
+			if l > y {
+				vp.SetYOffset(l)
+				return
+			}
+		}
+		return
+	}
+	for i := len(r.files) - 1; i >= 0; i-- {
+		if r.files[i] < y {
+			vp.SetYOffset(r.files[i])
+			return
+		}
+	}
+	vp.GotoTop()
 }
 
 // ---- full-view search ----
@@ -515,17 +770,17 @@ func (m *model) clearSearch() {
 // like delta's.
 func (m *model) runSearch(term string) {
 	m.clearSearch()
-	content, ok := m.renders[m.wantKey]
+	r, ok := m.renders[m.wantKey]
 	if term == "" || !ok {
 		if ok {
-			m.fullVP.SetContent(content)
+			m.fullVP.SetContent(r.content)
 			m.shownKey = m.wantKey
 		}
 		return
 	}
 	m.searchTerm = term
 	needle := strings.ToLower(term)
-	lines := strings.Split(content, "\n")
+	lines := strings.Split(r.content, "\n")
 	for i, line := range lines {
 		plain := strings.ToLower(ansi.Strip(line))
 		var ranges []lipgloss.Range
@@ -572,10 +827,10 @@ func (m *model) stepMatch(d int) {
 	}
 }
 
-// ---- settings ----
+// ---- settings and actions ----
 
 func (m *model) toggleLayout() tea.Cmd {
-	if m.columns() {
+	if m.prefs.layout == layoutColumns {
 		m.prefs.layout = layoutRows
 	} else {
 		m.prefs.layout = layoutColumns
@@ -585,37 +840,115 @@ func (m *model) toggleLayout() tea.Cmd {
 	return m.updatePreview()
 }
 
-func (m *model) toggleDiffMode() tea.Cmd {
-	if m.prefs.diff == diffSBS {
-		m.prefs.diff = diffSingle
-	} else {
+// cycleDiffMode goes auto → side-by-side → single column.
+func (m *model) cycleDiffMode() tea.Cmd {
+	switch m.prefs.diff {
+	case diffAuto:
 		m.prefs.diff = diffSBS
+	case diffSBS:
+		m.prefs.diff = diffSingle
+	default:
+		m.prefs.diff = diffAuto
 	}
 	savePref("diff", m.prefs.diff)
 	return m.updatePreview()
 }
 
-// ---- bubbletea ----
+// resizeList moves the divider between list and preview by one step.
+func (m *model) resizeList(grow bool) tea.Cmd {
+	split, name := &m.prefs.splitRows, "split-rows"
+	if m.columns() {
+		split, name = &m.prefs.splitColumns, "split-columns"
+	}
+	step := splitStep
+	if grow {
+		step = -splitStep // the setting is the preview's share
+	}
+	*split = max(splitMin, min(splitMax, *split+step))
+	savePref(name, strconv.Itoa(*split))
+	m.resize()
+	return m.updatePreview()
+}
 
-func waitLog(ch <-chan logBatch) tea.Cmd {
+func (m *model) setFlash(s string) tea.Cmd {
+	m.flash = s
+	m.flashSeq++
+	seq := m.flashSeq
+	return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return clearFlashMsg(seq) })
+}
+
+func (m *model) copyHash() tea.Cmd {
+	c := m.current()
+	if c == nil || c.wt {
+		return m.setFlash("nothing to copy")
+	}
+	hash := c.hash
 	return func() tea.Msg {
-		b, ok := <-ch
-		if !ok {
-			return logBatch{done: true}
+		if err := copyToClipboard(hash); err != nil {
+			return flashMsg("copy failed: " + err.Error())
 		}
-		return b
+		return flashMsg("copied " + hash)
 	}
 }
+
+// copyToClipboard uses ASGITLOG_CLIPBOARD (a command fed on stdin; the pty
+// driver points it at a logging stub) or pbcopy.
+func copyToClipboard(s string) error {
+	bin := os.Getenv("ASGITLOG_CLIPBOARD")
+	if bin == "" {
+		bin = "pbcopy"
+	}
+	cmd := exec.Command(bin)
+	cmd.Stdin = strings.NewReader(s)
+	return cmd.Run()
+}
+
+func (m *model) browse() tea.Cmd {
+	c := m.current()
+	switch {
+	case c == nil || c.wt:
+		return m.setFlash("nothing to open")
+	case m.webURL == "":
+		return m.setFlash("no remote with a web URL")
+	}
+	url := commitURL(m.webURL, c.hash)
+	return func() tea.Msg {
+		openURL(url)
+		return flashMsg("opened " + url)
+	}
+}
+
+// openURL opens a page in the browser. ASGITLOG_OPENER, when set, is used
+// as-is. Otherwise, when Google Chrome is running with a window, the tab is
+// created in Chrome's front window so it lands in the profile the user last
+// focused: plain `open` lets Chrome pick its own "last used" profile, which
+// routinely disagrees with the window you were just looking at. Anything else
+// falls back to `open`.
+func openURL(url string) {
+	if b := os.Getenv("ASGITLOG_OPENER"); b != "" {
+		_ = exec.Command(b, url).Run()
+		return
+	}
+	esc := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(url)
+	script := `tell application "Google Chrome"
+	if not running then error "not running"
+	if (count of windows) = 0 then error "no windows"
+	tell front window to make new tab with properties {URL:"` + esc + `"}
+	activate
+end tell`
+	if exec.Command("osascript", "-e", script).Run() == nil {
+		return
+	}
+	_ = exec.Command("open", url).Run()
+}
+
+// ---- bubbletea ----
 
 func (m *model) Init() tea.Cmd {
 	if m.mode == modeFatal {
 		return nil
 	}
-	cmds := []tea.Cmd{textinput.Blink, func() tea.Msg { return repoInfoMsg(loadRepoInfo()) }}
-	if m.logCh != nil {
-		cmds = append(cmds, waitLog(m.logCh))
-	}
-	return tea.Batch(cmds...)
+	return tea.Batch(textinput.Blink, func() tea.Msg { return repoInfoMsg(loadRepoInfo()) }, m.startLog())
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -626,10 +959,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.updatePreview()
 
 	case repoInfoMsg:
-		m.info = repoInfo(msg).String()
+		m.info, m.webURL = repoInfo(msg).String(), msg.WebURL
 		return m, nil
 
 	case logBatch:
+		if msg.gen != m.logGen {
+			return m, nil // a stream that was replaced
+		}
 		first := len(m.commits) == 0
 		m.addCommits(msg.commits)
 		if msg.err != nil {
@@ -637,12 +973,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		var cmds []tea.Cmd
 		if msg.done {
-			m.loading = false
+			m.loading, m.seekHash = false, ""
 		} else {
 			cmds = append(cmds, waitLog(m.logCh))
 		}
-		if first || m.current() != nil && m.wantKey == "" {
-			m.clampCursor()
+		m.clampCursor()
+		if first || m.wantKey == "" || msg.done {
 			cmds = append(cmds, m.updatePreview())
 		}
 		return m, tea.Batch(cmds...)
@@ -650,12 +986,31 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case previewMsg:
 		return m, m.handlePreview(msg)
 
+	case flashMsg:
+		return m, m.setFlash(string(msg))
+
+	case clearFlashMsg:
+		if int(msg) == m.flashSeq {
+			m.flash = ""
+		}
+		return m, nil
+
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 
 	case tea.MouseWheelMsg:
-		// The wheel always scrolls the diff, wherever the pointer is; the list
-		// is driven by the keys and by clicking a row.
+		// Over the list the wheel moves the selection (the way to get back up
+		// a long history without the keyboard); anywhere else it scrolls the
+		// diff.
+		if m.mode == modeList && m.overList(msg.X, msg.Y) {
+			switch msg.Button {
+			case tea.MouseWheelUp:
+				return m, m.moveCursor(m.screenUp())
+			case tea.MouseWheelDown:
+				return m, m.moveCursor(-m.screenUp())
+			}
+			return m, nil
+		}
 		if m.mode == modeList || m.mode == modeFull {
 			vp := m.activeVP()
 			*vp, _ = vp.Update(msg)
@@ -667,9 +1022,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
-	if m.mode == modeSearch {
+	switch m.mode {
+	case modeSearch:
 		m.si, cmd = m.si.Update(msg)
-	} else {
+	case modePickaxe:
+		m.pi, cmd = m.pi.Update(msg)
+	default:
 		m.ti, cmd = m.ti.Update(msg)
 	}
 	return m, cmd
@@ -693,36 +1051,75 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.handleFullKey(msg)
 	case modeSearch:
 		return m, m.handleSearchKey(msg)
+	case modePickaxe:
+		return m, m.handlePickaxeKey(msg)
 	}
 
+	up := m.screenUp()
 	switch {
+	case key.Matches(msg, m.keys.Newest):
+		return m, m.moveCursor(-m.rowCount())
+	case key.Matches(msg, m.keys.ListTop):
+		return m, m.moveCursor(up * m.rowCount())
+	case key.Matches(msg, m.keys.ListEnd):
+		return m, m.moveCursor(-up * m.rowCount())
+	case key.Matches(msg, m.keys.Oldest):
+		return m, m.moveCursor(+m.rowCount())
+	case msg.String() == "esc" && m.help.ShowAll:
+		return m, m.toggleHelp() // esc folds the help before it quits
 	case key.Matches(msg, m.keys.Quit):
 		return m, m.quit()
+	case key.Matches(msg, m.keys.Help), msg.String() == "?" && m.ti.Value() == "":
+		return m, m.toggleHelp()
 	case key.Matches(msg, m.keys.Open):
 		if m.current() == nil {
 			return m, nil
 		}
 		m.mode = modeFull
 		m.ti.Blur()
+		m.resize() // the full help, when open, differs per mode
 		return m, m.resetPreview()
 	case key.Matches(msg, m.keys.Layout):
 		return m, m.toggleLayout()
 	case key.Matches(msg, m.keys.DiffMode):
-		return m, m.toggleDiffMode()
+		return m, m.cycleDiffMode()
+	case key.Matches(msg, m.keys.Shrink):
+		return m, m.resizeList(false)
+	case key.Matches(msg, m.keys.Grow):
+		return m, m.resizeList(true)
 	case key.Matches(msg, m.keys.Up):
-		return m, m.moveCursor(-1)
+		return m, m.moveCursor(up)
 	case key.Matches(msg, m.keys.Down):
-		return m, m.moveCursor(+1)
+		return m, m.moveCursor(-up)
 	case key.Matches(msg, m.keys.PageUp):
-		return m, m.moveCursor(-m.listH())
+		return m, m.moveCursor(up * m.listH())
 	case key.Matches(msg, m.keys.PageDown):
-		return m, m.moveCursor(+m.listH())
+		return m, m.moveCursor(-up * m.listH())
 	case key.Matches(msg, m.keys.PrevUp):
 		m.prevVP.ScrollUp(3)
 		return m, nil
 	case key.Matches(msg, m.keys.PrevDown):
 		m.prevVP.ScrollDown(3)
 		return m, nil
+	case key.Matches(msg, m.keys.NextFile):
+		m.jumpFile(+1)
+		return m, nil
+	case key.Matches(msg, m.keys.PrevFile):
+		m.jumpFile(-1)
+		return m, nil
+	case key.Matches(msg, m.keys.Copy):
+		return m, m.copyHash()
+	case key.Matches(msg, m.keys.Browse):
+		return m, m.browse()
+	case key.Matches(msg, m.keys.All):
+		m.opts.all = !m.opts.all
+		return m, m.startLog()
+	case key.Matches(msg, m.keys.Pickaxe):
+		m.mode = modePickaxe
+		m.ti.Blur()
+		m.pi.SetValue(m.opts.pickaxe)
+		m.pi.CursorEnd()
+		return m, m.pi.Focus()
 	}
 
 	var cmd tea.Cmd
@@ -736,16 +1133,35 @@ func (m *model) handleFullKey(msg tea.KeyPressMsg) tea.Cmd {
 	case key.Matches(msg, m.fullKeys.Quit):
 		return m.quit()
 	case key.Matches(msg, m.fullKeys.Back):
-		// esc first drops an active search, then leaves the full view.
+		// esc first folds the help, then drops an active search, then leaves
+		// the full view.
+		if m.help.ShowAll && msg.String() == "esc" {
+			return m.toggleHelp()
+		}
 		if m.searchTerm != "" && msg.String() == "esc" {
 			m.clearSearch()
 			return m.updatePreview()
 		}
 		m.mode = modeList
 		m.clearSearch()
+		m.resize()
 		return tea.Batch(m.ti.Focus(), m.resetPreview())
+	case key.Matches(msg, m.fullKeys.Help):
+		return m.toggleHelp()
 	case key.Matches(msg, m.fullKeys.DiffMode):
-		return m.toggleDiffMode()
+		return m.cycleDiffMode()
+	case key.Matches(msg, m.fullKeys.Older):
+		return m.moveCursor(+1)
+	case key.Matches(msg, m.fullKeys.Newer):
+		return m.moveCursor(-1)
+	case key.Matches(msg, m.fullKeys.NextFile):
+		m.jumpFile(+1)
+	case key.Matches(msg, m.fullKeys.PrevFile):
+		m.jumpFile(-1)
+	case key.Matches(msg, m.fullKeys.Copy):
+		return m.copyHash()
+	case key.Matches(msg, m.fullKeys.Browse):
+		return m.browse()
 	case key.Matches(msg, m.fullKeys.Top):
 		m.fullVP.GotoTop()
 	case key.Matches(msg, m.fullKeys.Bottom):
@@ -783,17 +1199,41 @@ func (m *model) handleSearchKey(msg tea.KeyPressMsg) tea.Cmd {
 	return cmd
 }
 
+// handlePickaxeKey drives the content search input: enter rescopes the log to
+// the commits that add or remove the text (an empty text lifts the scope).
+func (m *model) handlePickaxeKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch msg.String() {
+	case "ctrl+c":
+		return m.quit()
+	case "esc", "enter":
+		m.mode = modeList
+		m.pi.Blur()
+		cmds := []tea.Cmd{m.ti.Focus()}
+		if text := strings.TrimSpace(m.pi.Value()); msg.String() == "enter" && text != m.opts.pickaxe {
+			m.opts.pickaxe = text
+			cmds = append(cmds, m.startLog())
+		}
+		return tea.Batch(cmds...)
+	}
+	var cmd tea.Cmd
+	m.pi, cmd = m.pi.Update(msg)
+	return cmd
+}
+
 // handleClick moves the selection to the list row under a left click. It
-// never opens the full diff: that stays on enter. Screen row 0 is the input;
-// the list starts on row 1.
+// never opens the full diff: that stays on enter.
 func (m *model) handleClick(msg tea.MouseClickMsg) tea.Cmd {
 	if m.mode != modeList || msg.Button != tea.MouseLeft {
 		return nil
 	}
-	if msg.Y < 1 || msg.Y > m.listH() || msg.X >= m.listW() {
+	if !m.overList(msg.X, msg.Y) {
 		return nil
 	}
-	i := m.top + msg.Y - 1
+	y, h := m.listY(), m.listH()
+	i := m.top + msg.Y - y
+	if m.bottomUp() {
+		i = m.top + (y + h - 1 - msg.Y)
+	}
 	if i >= m.rowCount() || i == m.cursor {
 		return nil
 	}
@@ -821,91 +1261,198 @@ func (m *model) View() tea.View {
 	return v
 }
 
-func (m *model) listView() string {
-	var body string
-	if m.columns() {
-		sep := stDim.Render(strings.TrimRight(strings.Repeat("│\n", m.bodyH()), "\n"))
-		right := m.labelRule(m.prevW()) + "\n" + m.prevVP.View()
-		body = lipgloss.JoinHorizontal(lipgloss.Top, m.listBlock(), " ", sep, " ", right)
-	} else {
-		body = m.listBlock() + "\n" + m.labelRule(m.width) + "\n" + m.prevVP.View()
+// hline draws a horizontal border w cells wide between the corners l and r,
+// with optional (already styled) texts set into it near each end.
+func hline(w int, l, r, left, right string) string {
+	inner := max(0, w-2)
+	if left != "" {
+		left = " " + left + " "
 	}
-	return m.inputLine() + "\n" + body + "\n" + m.infoLine() + "\n" + m.helpLine(m.keys)
+	if right != "" {
+		right = " " + right + " "
+	}
+	if 2+ansi.StringWidth(left)+ansi.StringWidth(right) > inner {
+		right = ""
+	}
+	if 1+ansi.StringWidth(left) > inner {
+		left = ansi.Truncate(left, max(0, inner-1), "")
+	}
+	fill := inner - ansi.StringWidth(left) - ansi.StringWidth(right)
+	lead := min(1, fill)
+	tail := 0
+	if right != "" {
+		tail = min(1, fill-lead)
+	}
+	return stDim.Render(l+strings.Repeat("─", lead)) + left +
+		stDim.Render(strings.Repeat("─", fill-lead-tail)) + right + stDim.Render(strings.Repeat("─", tail)+r)
 }
 
-// inputLine is the filter input with the match counter on the right.
-func (m *model) inputLine() string {
-	count := strconv.Itoa(m.rowCount())
-	if m.filtering() {
-		count += "/" + strconv.Itoa(len(m.commits))
+// fit truncates or pads s to exactly w cells.
+func fit(s string, w int) string {
+	s = ansi.Truncate(s, w, "")
+	return s + strings.Repeat(" ", max(0, w-ansi.StringWidth(s)))
+}
+
+// box frames lines (each with a cell of padding) in a rounded border w wide;
+// topRight goes into the top edge.
+func box(w int, topRight string, lines ...string) string {
+	side := stDim.Render("│")
+	out := []string{hline(w, "╭", "╮", "", topRight)}
+	for _, l := range lines {
+		out = append(out, side+fit(" "+l, w-2)+side)
+	}
+	return strings.Join(append(out, hline(w, "╰", "╯", "", "")), "\n")
+}
+
+// listView stacks the four boxes: repo summary, filter input (its top edge
+// carries the matches/total counter and the log's scope), the main box and
+// the help.
+func (m *model) listView() string {
+	w := m.width
+	input := m.ti.View()
+	if m.mode == modePickaxe {
+		input = m.pi.View()
+	}
+	return strings.Join([]string{
+		box(w, "", stInfo.Render(m.info)),
+		box(w, m.counter(), input),
+		m.mainBox(),
+		box(w, "", m.footLines(m.keys)...),
+	}, "\n")
+}
+
+// scope describes what the log is limited to, beyond the current branch.
+func (m *model) scope() string {
+	var parts []string
+	if m.opts.all {
+		parts = append(parts, "all refs")
+	}
+	if len(m.opts.revs) > 0 {
+		parts = append(parts, strings.Join(m.opts.revs, " "))
+	}
+	if len(m.opts.paths) > 0 {
+		parts = append(parts, "-- "+strings.Join(m.opts.paths, " "))
+	}
+	if m.opts.pickaxe != "" {
+		parts = append(parts, "-S"+strconv.Quote(m.opts.pickaxe))
+	}
+	return strings.Join(parts, "  ")
+}
+
+// counter is the matches/total count, with the scope and the loading mark.
+func (m *model) counter() string {
+	s := stCount.Render(strconv.Itoa(m.rowCount()) + "/" + strconv.Itoa(len(m.commits)))
+	if scope := m.scope(); scope != "" {
+		s += " " + stScope.Render("["+truncate(scope, max(10, m.width/2))+"]")
 	}
 	if m.loading {
-		count += " loading…"
+		s += stDim.Render(" loading…")
 	}
-	left := m.ti.View()
-	gap := m.width - ansi.StringWidth(left) - ansi.StringWidth(count)
-	if gap < 1 {
-		return truncate(left, m.width)
-	}
-	return left + strings.Repeat(" ", gap) + stDim.Render(count)
+	return s
 }
 
-func (m *model) listBlock() string {
-	h, w := m.listH(), m.listW()
+// listLines are the visible rows, exactly listH lines of listW cells.
+func (m *model) listLines() []string {
+	h, l := m.listH(), m.rowLayout()
 	lines := make([]string, 0, h)
 	for i := m.top; i < m.top+h && i < m.rowCount(); i++ {
 		c, matched := m.rowAt(i)
 		sel := i == m.cursor
-		lines = append(lines, renderSegs(rowSegs(c, w, m.hashW, m.columns(), sel), matched, sel))
+		lines = append(lines, renderSegs(rowSegs(c, l, sel), matched, sel))
 	}
 	if len(lines) == 0 {
 		msg := ""
 		switch {
 		case m.logErr != "":
-			msg = stError.Render(truncate(m.logErr, w))
-		case m.filtering():
-			msg = stDim.Render("no matching commits")
+			msg = " " + stError.Render(truncate(m.logErr, l.width-1))
+		case m.filtering() || m.opts.pickaxe != "" && !m.loading:
+			msg = stDim.Render("  no matching commits")
 		case !m.loading:
-			msg = stDim.Render("no commits")
+			msg = stDim.Render("  no commits")
 		}
-		lines = append(lines, msg)
+		lines = append(lines, fit(msg, l.width))
 	}
-	blank := strings.Repeat(" ", w)
 	for len(lines) < h {
-		lines = append(lines, blank)
+		lines = append(lines, strings.Repeat(" ", l.width))
 	}
-	return strings.Join(lines, "\n")
+	if m.bottomUp() {
+		slices.Reverse(lines)
+	}
+	return lines
 }
 
-// labelRule is the line above the preview carrying the diff mode, the
-// equivalent of fzf's preview label.
-func (m *model) labelRule(w int) string {
-	label := " " + diffLabel(m.prefs.diff) + " "
+// mainBox is the list and the commit details in one frame, split by a
+// divider: horizontal in the rows layout, vertical in the columns layout. The
+// edge over the details carries the diff mode, plus the commit once its
+// header has scrolled out of view; the bottom edge carries the scroll
+// position.
+func (m *model) mainBox() string {
+	w, side := m.width, stDim.Render("│")
+	label := stLabel.Render(diffLabel(m.prefs.diff, m.prevVP.Width()))
 	if m.deltaBin == "" {
-		label = " delta not found: plain git colors "
+		label = stLabel.Render("delta not found: plain git colors")
 	}
-	left := 2
-	right := max(0, w-left-ansi.StringWidth(label))
-	return truncate(stDim.Render(strings.Repeat("─", left))+stLabel.Render(label)+stDim.Render(strings.Repeat("─", right)), w)
+	if c := m.current(); c != nil && m.prevVP.YOffset() > 0 {
+		label += "  " + stTitle.Render(truncate(c.short()+" "+c.subject(), max(10, m.detailsW()/2)))
+	}
+	pos := ""
+	if total := m.prevVP.TotalLineCount(); total > m.prevVP.Height() {
+		pos = stDim.Render(strconv.Itoa(min(total, m.prevVP.YOffset()+m.prevVP.Height())) + "/" + strconv.Itoa(total))
+	}
+	list := m.listLines()
+	details := strings.Split(m.prevVP.View(), "\n")
+	dw := m.detailsW()
+
+	var out []string
+	if m.columns() {
+		lw := m.listW()
+		out = append(out, stDim.Render("╭"+strings.Repeat("─", lw))+hline(dw+2, "┬", "╮", label, ""))
+		for i := range list {
+			d := ""
+			if i < len(details) {
+				d = details[i]
+			}
+			out = append(out, side+list[i]+side+fit(" "+d, dw)+side)
+		}
+		out = append(out, stDim.Render("╰"+strings.Repeat("─", lw))+hline(dw+2, "┴", "╯", "", pos))
+		return strings.Join(out, "\n")
+	}
+	out = append(out, hline(w, "╭", "╮", "", ""))
+	for _, l := range list {
+		out = append(out, side+l+side)
+	}
+	out = append(out, hline(w, "├", "┤", label, ""))
+	for _, d := range details {
+		out = append(out, side+fit(" "+d, dw)+side)
+	}
+	return strings.Join(append(out, hline(w, "╰", "╯", "", pos)), "\n")
 }
 
-// helpLine truncates the help itself: bubbles' help keeps appending items
+// footLines is the key help, or with a status message on its last line while
+// one is showing. The help is bubbles' component as is: its short view
+// normally, and the full view (one column per FullHelp group) while `?` has
+// ShowAll on. Lines are cut to the width: bubbles' help keeps appending items
 // past its width when the ellipsis does not fit.
-func (m *model) helpLine(keys help.KeyMap) string {
-	return truncate(m.help.View(keys), m.width)
-}
-
-func (m *model) infoLine() string {
-	return truncate(stDim.Render(m.info), m.width)
+func (m *model) footLines(keys help.KeyMap) []string {
+	lines := strings.Split(m.help.View(keys), "\n")
+	lines = lines[:min(len(lines), m.footH())]
+	for i, l := range lines {
+		lines[i] = truncate(l, max(0, m.width-4))
+	}
+	if m.flash != "" {
+		lines[len(lines)-1] = truncate(stFlash.Render(m.flash), max(0, m.width-4))
+	}
+	return lines
 }
 
 func (m *model) fullView() string {
 	title := ""
 	if c := m.current(); c != nil {
-		title = stHash.Render(c.short()) + " " + truncate(c.subject(), max(10, m.width/2))
+		title = stDim.Render(strconv.Itoa(m.cursor+1)+"/"+strconv.Itoa(m.rowCount())) + "  " +
+			stHash.Render(c.short()) + " " + truncate(c.subject(), max(10, m.width/2))
 	}
 	pos := strconv.Itoa(int(m.fullVP.ScrollPercent()*100)) + "%"
-	head := title + "  " + stLabel.Render(diffLabel(m.prefs.diff)) + "  " + stDim.Render(pos)
+	head := title + "  " + stLabel.Render(diffLabel(m.prefs.diff, m.fullVP.Width())) + "  " + stDim.Render(pos)
 	if m.searchTerm != "" {
 		found := "no matches"
 		if n := len(m.matchLines); n > 0 {
@@ -913,9 +1460,10 @@ func (m *model) fullView() string {
 		}
 		head += "  " + stDim.Render("/"+m.searchTerm+" ("+found+")")
 	}
-	foot := m.helpLine(m.fullKeys)
+	foot := "  " + strings.Join(m.footLines(m.fullKeys), "\n  ")
 	if m.mode == modeSearch {
-		foot = m.si.View()
+		foot = m.si.View() + strings.Repeat("\n", m.footH()-1)
 	}
-	return truncate(head, m.width) + "\n" + m.fullVP.View() + "\n" + foot
+	rule := stDim.Render(strings.Repeat("─", m.width))
+	return truncate("  "+head, m.width) + "\n" + rule + "\n" + m.fullVP.View() + "\n" + foot
 }

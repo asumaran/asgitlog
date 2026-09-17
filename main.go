@@ -4,6 +4,8 @@
 // delta. Enter opens the diff full screen. Runs as a herdr plugin popup and
 // from a plain shell; either way it works on the repository of the current
 // directory.
+//
+//	asgitlog [flags] [<revision range>...] [-- <path>...]
 package main
 
 import (
@@ -13,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -31,7 +34,18 @@ func main() {
 	show := flag.String("show", "", "with -dump: print the preview of this commit instead of the list")
 	limit := flag.Int("n", 20, "with -dump: number of rows to print (0 = all)")
 	width := flag.Int("width", 120, "with -dump: width to lay the output out for")
-	flag.Parse()
+	flag.Usage = func() {
+		fmt.Fprintln(flag.CommandLine.Output(), "usage: asgitlog [flags] [<revision range>...] [-- <path>...]")
+		flag.PrintDefaults()
+	}
+	// The flag package swallows the "--" that separates revisions from paths,
+	// so the command line is split on it first.
+	args, paths := os.Args[1:], []string(nil)
+	if i := slices.Index(args, "--"); i >= 0 {
+		args, paths = args[:i], args[i+1:]
+	}
+	_ = flag.CommandLine.Parse(args)
+	opts := logOpts{revs: flag.Args(), paths: paths}
 
 	if *showVersion {
 		fmt.Println(version)
@@ -40,7 +54,7 @@ func main() {
 
 	enterPaneCwd()
 	deltaBin, _ := exec.LookPath("delta")
-	m := newModel(loadPrefs(), deltaBin)
+	m := newModel(loadPrefs(), deltaBin, opts)
 
 	if !insideWorkTree() {
 		cwd, _ := os.Getwd()
@@ -58,11 +72,7 @@ func main() {
 		os.Exit(runDump(m, *query, *show, *limit, *width))
 	}
 
-	if m.mode != modeFatal {
-		ctx, cancel := context.WithCancel(context.Background())
-		m.logCh, m.stopLog = streamLog(ctx), cancel
-	}
-	// Alt screen and mouse mode are declared per frame by View().
+	// The log stream starts in Init. Alt screen and mouse mode are declared per frame by View().
 	if _, err := tea.NewProgram(m).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -106,14 +116,18 @@ func runDump(m *model, query, show string, limit, width int) int {
 		fmt.Println(s)
 	}
 	fmt.Println("repo:  ", loadRepoInfo())
-	fmt.Printf("prefs:  layout=%s diff=%s (%s)\n", m.prefs.layout, m.prefs.diff, homeRel(prefsDir()))
+	fmt.Printf("prefs:  layout=%s diff=%s split-rows=%d split-columns=%d (%s)\n",
+		m.prefs.layout, m.prefs.diff, m.prefs.splitRows, m.prefs.splitColumns, homeRel(prefsDir()))
+	if s := m.scope(); s != "" {
+		fmt.Println("scope: ", s)
+	}
 	delta := m.deltaBin
 	if delta == "" {
 		delta = "not found (plain git colors)"
 	}
 	fmt.Println("delta: ", delta)
 
-	for b := range streamLog(context.Background()) {
+	for b := range streamLog(context.Background(), m.opts, m.logGen) {
 		m.addCommits(b.commits)
 		if b.err != nil {
 			fmt.Fprintln(os.Stderr, "git log:", b.err)
@@ -131,13 +145,14 @@ func runDump(m *model, query, show string, limit, width int) int {
 			if m.commits[i].hash != full {
 				continue
 			}
-			msg := renderPreviewCmd(context.Background(), m.commits[i], width, m.prefs.diff, m.deltaBin)().(previewMsg)
+			mode := effectiveDiff(m.prefs.diff, width)
+			msg := renderPreviewCmd(context.Background(), m.commits[i], width, mode, m.deltaBin, m.opts.paths)().(previewMsg)
 			if msg.err != nil {
 				fmt.Fprintln(os.Stderr, "asgitlog:", msg.err)
 				return 1
 			}
 			fmt.Println(strings.Repeat("-", width))
-			out(msg.content)
+			out(msg.render.content)
 			return 0
 		}
 		fmt.Fprintln(os.Stderr, "asgitlog: commit is not in the log of HEAD:", show)
@@ -151,9 +166,11 @@ func runDump(m *model, query, show string, limit, width int) int {
 		fmt.Printf(", %d matching %q", m.rowCount(), query)
 	}
 	fmt.Println()
+	layout := m.rowLayout()
+	layout.width = width
 	for i := 0; i < m.rowCount() && (limit <= 0 || i < limit); i++ {
 		c, matched := m.rowAt(i)
-		out(renderSegs(rowSegs(c, width, m.hashW, m.columns(), false), matched, false))
+		out(renderSegs(rowSegs(c, layout, false), matched, false))
 	}
 	return 0
 }

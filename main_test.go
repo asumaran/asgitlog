@@ -2,17 +2,25 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
 )
 
+// rec builds a log record; parents and the author time are fixed unless the
+// test cares (see recP).
 func rec(hash, short, author, email, date, decor, subject string) string {
-	return strings.Join([]string{hash, short, author, email, date, decor, subject}, fieldSep)
+	return recP(hash, short, author, email, date, decor, "p1", "1767261600", subject)
+}
+
+func recP(hash, short, author, email, date, decor, parents, at, subject string) string {
+	return strings.Join([]string{hash, short, author, email, date, decor, parents, at, subject}, fieldSep)
 }
 
 func mustParse(t *testing.T, r string) commit {
@@ -50,6 +58,13 @@ func TestParseCommitFields(t *testing.T) {
 		"HEAD -> main, tag: v1.0, origin/main, refs/stash 05/03/2026 14:30"
 	if c.corpus != want {
 		t.Errorf("corpus = %q\nwant     %q", c.corpus, want)
+	}
+	if c.when != 1767261600 || c.merge() {
+		t.Errorf("when=%d merge=%v", c.when, c.merge())
+	}
+	m := mustParse(t, recP("h", "abc1234", "A", "a@b", "01/01/2026 00:00", "", "aaaa bbbb", "1", "Merge branch x"))
+	if !m.merge() || m.parents != "aaaa bbbb" {
+		t.Errorf("merge not detected: %+v", m)
 	}
 }
 
@@ -91,23 +106,20 @@ func TestParseCommitRejectsMalformed(t *testing.T) {
 	}
 }
 
-func TestParseShortstat(t *testing.T) {
-	cases := map[string]detail{
-		" 3 files changed, 10 insertions(+), 2 deletions(-)": {files: 3, added: 10, deleted: 2},
-		" 1 file changed, 1 insertion(+)":                    {files: 1, added: 1},
-		" 2 files changed, 7 deletions(-)":                   {files: 2, deleted: 7},
-		"":                                                   {},
+func TestParseNumstat(t *testing.T) {
+	d := parseNumstat("\n10\t2\tui.go\n-\t-\tdocs/demo.gif\n0\t7\tpath with\ttab.txt\n")
+	want := []fileStat{{path: "ui.go", added: 10, deleted: 2}, {path: "docs/demo.gif", binary: true}, {path: "path with\ttab.txt", deleted: 7}}
+	if !reflect.DeepEqual(d.files, want) || d.added != 10 || d.deleted != 9 {
+		t.Errorf("parseNumstat = %+v", d)
 	}
-	for in, want := range cases {
-		if got := parseShortstat(in); got != want {
-			t.Errorf("parseShortstat(%q) = %+v, want %+v", in, got, want)
-		}
-	}
-	if s := ansi.Strip(statLine(detail{files: 1, added: 4})); s != "1 file, +4 -0" {
+	if s := ansi.Strip(statLine(d)); s != "3 files changed  +10 -9" {
 		t.Errorf("statLine = %q", s)
 	}
-	if s := statLine(detail{}); s != "no changes" {
+	if s := ansi.Strip(statLine(detail{})); s != "no changes" {
 		t.Errorf("empty statLine = %q", s)
+	}
+	if s := ansi.Strip(sectionRule(statLine(d), 40)); s != "── 3 files changed  +10 -9 ─────────────" || ansi.StringWidth(s) != 40 {
+		t.Errorf("sectionRule = %q", s)
 	}
 }
 
@@ -123,6 +135,42 @@ func TestRepoInfoString(t *testing.T) {
 	}
 	if got := homeRel("/Users/xavier/repo"); got != "/Users/xavier/repo" {
 		t.Errorf("homeRel must only match whole path components, got %q", got)
+	}
+}
+
+func TestWebAndCommitURL(t *testing.T) {
+	cases := map[string]string{
+		"git@github.com:asumaran/gotopr.git":         "https://github.com/asumaran/gotopr",
+		"https://github.com/asumaran/gotopr.git":     "https://github.com/asumaran/gotopr",
+		"https://user@github.com/asumaran/gotopr":    "https://github.com/asumaran/gotopr",
+		"ssh://git@gitlab.example.com:2222/g/s/repo": "https://gitlab.example.com/g/s/repo",
+		"/srv/git/repo.git":                          "",
+		"":                                           "",
+	}
+	for in, want := range cases {
+		if got := webURL(in); got != want {
+			t.Errorf("webURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := commitURL("https://github.com/a/b", "abc"); got != "https://github.com/a/b/commit/abc" {
+		t.Errorf("github: %q", got)
+	}
+	if got := commitURL("https://gitlab.com/a/b", "abc"); got != "https://gitlab.com/a/b/-/commit/abc" {
+		t.Errorf("gitlab: %q", got)
+	}
+	if got := commitURL("https://bitbucket.org/a/b", "abc"); got != "https://bitbucket.org/a/b/commits/abc" {
+		t.Errorf("bitbucket: %q", got)
+	}
+}
+
+func TestLogArgs(t *testing.T) {
+	args := logOpts{revs: []string{"main..dev"}, paths: []string{"src", "README.md"}, all: true, pickaxe: "needle"}.args()
+	tail := strings.Join(args[len(args)-6:], " ")
+	if tail != "--all -Sneedle main..dev -- src README.md" {
+		t.Errorf("args tail = %q", tail)
+	}
+	if plain := (logOpts{}).args(); plain[len(plain)-1] != "--" {
+		t.Errorf("revisions must always be closed with --: %v", plain)
 	}
 }
 
@@ -146,22 +194,43 @@ func hitIdx(hits []hit) []int {
 }
 
 func sameInts(a, b []int) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return reflect.DeepEqual(append([]int{}, a...), append([]int{}, b...))
 }
 
-func TestFilterKeepsLogOrder(t *testing.T) {
-	cs := testCommits(t, "x preview y", "unrelated", "preview", "the preview pane")
-	// The exact match (index 2) would rank first in a scored search.
-	if got := hitIdx(filterCommits(cs, nil, 0, []string{"preview"})); !sameInts(got, []int{0, 2, 3}) {
-		t.Errorf("hits = %v, want [0 2 3]", got)
+// spelled returns the corpus bytes at the matched offsets, in corpus order.
+func spelled(c commit, h hit) string {
+	seen := map[int]bool{}
+	for _, off := range h.matched {
+		seen[off] = true
+	}
+	var b strings.Builder
+	for i := 0; i < len(c.corpus); i++ {
+		if seen[i] {
+			b.WriteByte(c.corpus[i])
+		}
+	}
+	return b.String()
+}
+
+func TestFilterIsSubstringAndKeepsLogOrder(t *testing.T) {
+	cs := testCommits(t, "x Preview y", "p r e v i e w scattered", "preview", "the PREVIEW pane, a preview")
+	got := filterCommits(cs, nil, 0, queryTerms("preview"))
+	// Index 1 only matches as a subsequence; index 2 would rank first if scored.
+	if !sameInts(hitIdx(got), []int{0, 2, 3}) {
+		t.Fatalf("hits = %v, want [0 2 3]", hitIdx(got))
+	}
+	if s := spelled(cs[3], got[2]); s != "PREVIEWpreview" {
+		t.Errorf("every occurrence should be reported, got %q", s)
+	}
+}
+
+func TestFilterFuzzyTerm(t *testing.T) {
+	cs := testCommits(t, "x Preview y", "p r e v i e w scattered", "unrelated")
+	if got := hitIdx(filterCommits(cs, nil, 0, queryTerms("~prvw"))); !sameInts(got, []int{0, 1}) {
+		t.Errorf("fuzzy hits = %v, want [0 1]", got)
+	}
+	if terms := queryTerms(" ~  FiX ~a "); len(terms) != 2 || terms[0] != (qterm{text: "fix"}) || terms[1] != (qterm{text: "a", fuzzy: true}) {
+		t.Errorf("queryTerms = %+v", terms)
 	}
 }
 
@@ -171,28 +240,25 @@ func TestFilterTermsAreANDed(t *testing.T) {
 	if !sameInts(hitIdx(got), []int{0, 3}) {
 		t.Fatalf("hits = %v, want [0 3]", hitIdx(got))
 	}
-	// Matched offsets of both terms are reported, and point at the right bytes.
-	var b strings.Builder
-	seen := map[int]bool{}
-	for _, off := range got[0].matched {
-		seen[off] = true
-	}
-	for i := 0; i < len(cs[0].corpus); i++ {
-		if seen[i] {
-			b.WriteByte(cs[0].corpus[i])
-		}
-	}
-	if s := b.String(); s != "fixpreview" {
+	if s := spelled(cs[0], got[0]); s != "fixpreview" {
 		t.Errorf("matched bytes spell %q, want %q", s, "fixpreview")
+	}
+}
+
+func TestFilterNonASCII(t *testing.T) {
+	cs := testCommits(t, "añade el motor ANALÍTICO", "nothing here")
+	got := filterCommits(cs, nil, 0, queryTerms("analítico"))
+	if !sameInts(hitIdx(got), []int{0}) || spelled(cs[0], got[0]) != "ANALÍTICO" {
+		t.Errorf("non-ASCII term: hits=%v", hitIdx(got))
 	}
 }
 
 func TestFilterSubsetAndFrom(t *testing.T) {
 	cs := testCommits(t, "alpha", "beta alpha", "gamma", "alpha again")
-	if got := hitIdx(filterCommits(cs, []int{1, 2, 3}, 0, []string{"alpha"})); !sameInts(got, []int{1, 3}) {
+	if got := hitIdx(filterCommits(cs, []int{1, 2, 3}, 0, queryTerms("alpha"))); !sameInts(got, []int{1, 3}) {
 		t.Errorf("among: %v, want [1 3]", got)
 	}
-	if got := hitIdx(filterCommits(cs, nil, 2, []string{"alpha"})); !sameInts(got, []int{3}) {
+	if got := hitIdx(filterCommits(cs, nil, 2, queryTerms("alpha"))); !sameInts(got, []int{3}) {
 		t.Errorf("from: %v, want [3]", got)
 	}
 	if got := filterCommits(cs, nil, 0, nil); got != nil {
@@ -207,8 +273,10 @@ func TestNarrows(t *testing.T) {
 	}{
 		{"fi", "fix", true},
 		{"fix", "fix p", true},
+		{"~fx", "~fxp", true},
 		{"", "f", false},
 		{" ", " f", false},
+		{"~", "~f", false},
 		{"fix", "fi", false},
 		{"fix", "pix", false},
 	}
@@ -221,77 +289,105 @@ func TestNarrows(t *testing.T) {
 
 // ---- rows ----
 
+func wide(w int) rowLayout {
+	return rowLayout{width: w, hashW: 7, authorW: 12, now: 1767261600 + 3*86400}
+}
+func compact(w int) rowLayout { l := wide(w); l.compact = true; return l }
+
 func TestRowWidthsAndColumns(t *testing.T) {
 	c := sampleCommit(t)
 	for _, w := range []int{200, 150, 120, 100, 80, 60, 40, 25} {
-		for _, compact := range []bool{false, true} {
-			row := plainSegs(rowSegs(&c, w, 7, compact, false))
+		for _, l := range []rowLayout{wide(w), compact(w)} {
+			row := plainSegs(rowSegs(&c, l, false))
 			if got := ansi.StringWidth(row); got != w {
-				t.Errorf("width %d compact=%v: row is %d cells: %q", w, compact, got, row)
+				t.Errorf("width %d compact=%v: row is %d cells: %q", w, l.compact, got, row)
 			}
 		}
 	}
 
-	wide := plainSegs(rowSegs(&c, 150, 7, false, false))
-	if !strings.HasPrefix(wide, "  0123456 Ada Lovelace    <ada@example.c…> feat(ui): añade") {
-		t.Errorf("wide row starts with %q", wide[:60])
+	row := plainSegs(rowSegs(&c, wide(150), false))
+	if !strings.HasPrefix(row, "  0123456 Ada Lovelace feat(ui): añade el motor analítico ") {
+		t.Errorf("wide row starts with %q", row[:70])
 	}
-	if !strings.HasSuffix(wide, " 05/03/2026") {
-		t.Errorf("wide row must end with the date: %q", wide)
+	if strings.Contains(row, "ada@example") {
+		t.Errorf("the email is not a list column: %q", row)
 	}
-	// Refs are right-aligned in their own column, right before the date.
-	if !strings.Contains(wide, "… 05/03/2026") || !strings.Contains(wide, "HEAD -> main, tag: v1.0") {
-		t.Errorf("refs column wrong: %q", wide)
+	// Refs take only the room they need, right before the date.
+	if !strings.HasSuffix(row, "  HEAD -> main, tag: v1.0, origin/main, refs/stash 05/03/2026") {
+		t.Errorf("refs/date tail wrong: %q", row)
 	}
 
-	compact := plainSegs(rowSegs(&c, 60, 7, true, false))
-	if !strings.HasPrefix(compact, "  0123456 05/03/2026 feat(ui)") || strings.Contains(compact, "Ada") {
-		t.Errorf("compact row = %q", compact)
+	crow := plainSegs(rowSegs(&c, compact(60), false))
+	if !strings.HasPrefix(crow, "  0123456   3d feat(ui)") || strings.Contains(crow, "Ada") {
+		t.Errorf("compact row = %q", crow)
 	}
-	if sel := plainSegs(rowSegs(&c, 60, 7, true, true)); !strings.HasPrefix(sel, "▌ 0123456") {
+	if sel := plainSegs(rowSegs(&c, compact(60), true)); !strings.HasPrefix(sel, "▌ 0123456") {
 		t.Errorf("selected row = %q", sel)
 	}
 }
 
-func TestRowSubjectColumnIsStable(t *testing.T) {
+func TestRowColumnsAreStable(t *testing.T) {
 	a := mustParse(t, rec("h", "abc1234", "Al", "a@b.c", "01/01/2026 00:00", "", "short"))
 	b := mustParse(t, rec("h", "abc12345", "A much longer author name", "long.email@example.com", "01/01/2026 00:00",
-		"refs/heads/x", "a subject long enough to be truncated by any reasonable list width, really"))
-	ra, rb := plainSegs(rowSegs(&a, 140, 8, false, false)), plainSegs(rowSegs(&b, 140, 8, false, false))
+		"refs/heads/x", "a subject long enough to be truncated by any reasonable list width, really, it just goes on and on and on"))
+	l := rowLayout{width: 120, hashW: 8, authorW: maxAuthorW}
+	ra, rb := plainSegs(rowSegs(&a, l, false)), plainSegs(rowSegs(&b, l, false))
 	col := func(row, needle string) int { return ansi.StringWidth(row[:strings.Index(row, needle)]) }
 	if col(ra, "short") != col(rb, "a subject") {
 		t.Errorf("subject columns differ:\n%q\n%q", ra, rb)
 	}
-	if col(ra, "01/01/2026") != col(rb, "01/01/2026") {
-		t.Errorf("date columns differ:\n%q\n%q", ra, rb)
+	if col(ra, "01/01/2026") != col(rb, "01/01/2026") || !strings.HasSuffix(rb, "… x 01/01/2026") {
+		t.Errorf("date/refs columns differ:\n%q\n%q", ra, rb)
 	}
 }
 
-func TestNarrowWideRowDropsColumns(t *testing.T) {
+func TestNarrowWideRowDropsAuthor(t *testing.T) {
 	c := sampleCommit(t)
-	if row := plainSegs(rowSegs(&c, 90, 7, false, false)); strings.Contains(row, "HEAD") || !strings.Contains(row, "Ada") {
-		t.Errorf("90 cols should drop refs only: %q", row)
+	if row := plainSegs(rowSegs(&c, wide(70), false)); !strings.Contains(row, "Ada") {
+		t.Errorf("70 cols should keep the author: %q", row)
 	}
-	if row := plainSegs(rowSegs(&c, 60, 7, false, false)); strings.Contains(row, "Ada") || !strings.Contains(row, "05/03/2026") {
-		t.Errorf("60 cols should drop the author too: %q", row)
+	if row := plainSegs(rowSegs(&c, wide(50), false)); strings.Contains(row, "Ada") || !strings.Contains(row, "05/03/2026") {
+		t.Errorf("50 cols should drop the author: %q", row)
+	}
+}
+
+func TestSpecialRows(t *testing.T) {
+	m := mustParse(t, recP("h", "abc1234", "A", "a@b", "01/01/2026 00:00", "", "p1 p2", "1", "Merge branch x"))
+	if out := renderSegs(rowSegs(&m, wide(80), false), nil, false); !strings.Contains(out, "\x1b[2m") {
+		t.Errorf("merge subjects should be faint: %q", out)
+	}
+	wt := commit{}
+	wt, _ = parseCommit(recP("", wtShort, "", "", "01/01/2026 00:00", "", "", "1", "Uncommitted changes (2 files)"))
+	wt.wt = true
+	row := plainSegs(rowSegs(&wt, wide(80), false))
+	if !strings.HasPrefix(row, "  *       ") || !strings.Contains(row, "Uncommitted changes") || strings.Contains(row, "2026") {
+		t.Errorf("working tree row = %q", row)
+	}
+}
+
+func TestRelDate(t *testing.T) {
+	now := int64(1_800_000_000)
+	cases := map[int64]string{30: "now", 300: "5m", 7200: "2h", 3 * 86400: "3d", 21 * 86400: "3w", 90 * 86400: "3mo", 800 * 86400: "2y"}
+	for age, want := range cases {
+		if got := relDate(now-age, now); got != want {
+			t.Errorf("relDate(%ds) = %q, want %q", age, got, want)
+		}
 	}
 }
 
 func TestRenderSegsHighlightsMatchedBytes(t *testing.T) {
 	c := sampleCommit(t)
-	hits := filterCommits([]commit{c}, nil, 0, []string{"analítico"})
+	hits := filterCommits([]commit{c}, nil, 0, queryTerms("analítico"))
 	if len(hits) != 1 {
 		t.Fatal("expected a hit")
 	}
-	out := renderSegs(rowSegs(&c, 150, 7, false, false), hits[0].matched, false)
-	if ansi.Strip(out) != plainSegs(rowSegs(&c, 150, 7, false, false)) {
+	plain := plainSegs(rowSegs(&c, wide(150), false))
+	out := renderSegs(rowSegs(&c, wide(150), false), hits[0].matched, false)
+	// The multibyte í must survive being split into highlight runs.
+	if ansi.Strip(out) != plain || !strings.Contains(plain, "analítico") {
 		t.Errorf("highlighting changed the text: %q", ansi.Strip(out))
 	}
-	// The multibyte í must survive being split into highlight runs.
-	if !strings.Contains(ansi.Strip(out), "analítico") {
-		t.Errorf("multibyte subject broken: %q", ansi.Strip(out))
-	}
-	if out == renderSegs(rowSegs(&c, 150, 7, false, false), nil, false) {
+	if out == renderSegs(rowSegs(&c, wide(150), false), nil, false) {
 		t.Error("matched offsets produced no highlight")
 	}
 }
@@ -300,20 +396,35 @@ func TestRenderSegsHighlightsMatchedBytes(t *testing.T) {
 
 func TestPrefsRoundTrip(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	if p := loadPrefs(); p.layout != layoutRows || p.diff != diffSBS {
+	if p := loadPrefs(); p != (prefs{layout: layoutRows, diff: diffAuto, splitRows: 70, splitColumns: 75}) {
 		t.Errorf("defaults = %+v", p)
 	}
 	savePref("layout", layoutColumns)
 	savePref("diff", diffSingle)
-	if p := loadPrefs(); p.layout != layoutColumns || p.diff != diffSingle {
+	savePref("split-rows", "55")
+	savePref("split-columns", "80")
+	if p := loadPrefs(); p != (prefs{layout: layoutColumns, diff: diffSingle, splitRows: 55, splitColumns: 80}) {
 		t.Errorf("after save = %+v", p)
 	}
 	if got := filepath.Base(prefsDir()); got != "asgitlog" {
 		t.Errorf("prefs dir = %q", prefsDir())
 	}
 	savePref("layout", "garbage")
-	if p := loadPrefs(); p.layout != layoutRows {
-		t.Errorf("unknown values must fall back to the default, got %+v", p)
+	savePref("split-rows", "5")
+	if p := loadPrefs(); p.layout != layoutRows || p.splitRows != 70 {
+		t.Errorf("invalid values must fall back to the defaults, got %+v", p)
+	}
+}
+
+func TestEffectiveDiff(t *testing.T) {
+	if effectiveDiff(diffAuto, 119) != diffSingle || effectiveDiff(diffAuto, 120) != diffSBS {
+		t.Error("auto should switch at 120 columns")
+	}
+	if effectiveDiff(diffSBS, 40) != diffSBS || effectiveDiff(diffSingle, 300) != diffSingle {
+		t.Error("explicit modes ignore the width")
+	}
+	if diffLabel(diffAuto, 200) != "auto: side-by-side" || diffLabel(diffSingle, 200) != "single column" {
+		t.Errorf("labels: %q / %q", diffLabel(diffAuto, 200), diffLabel(diffSingle, 200))
 	}
 }
 
@@ -321,31 +432,101 @@ func TestPrefsRoundTrip(t *testing.T) {
 
 func TestPreviewHeader(t *testing.T) {
 	c := sampleCommit(t)
-	d := detail{body: "First paragraph.\n\nSecond one.", files: 2, added: 5, deleted: 1}
+	d := detail{body: "First paragraph.\n\nSecond one.", added: 5, deleted: 1,
+		files: []fileStat{{path: "ui.go", added: 5, deleted: 1}, {path: "docs/demo.gif", binary: true}}}
 	got := ansi.Strip(previewHeader(&c, &d, 100))
 	want := strings.Join([]string{
 		"commit 0123456789abcdef0123456789abcdef01234567 (HEAD -> main, tag: v1.0, origin/main, refs/stash)",
 		"Author: Ada Lovelace <ada@example.com>",
 		"Date:   05/03/2026 14:30",
-		"Stat:   2 files, +5 -1",
 		"",
 		"    feat(ui): añade el motor analítico",
 		"",
 		"    First paragraph.",
 		"",
 		"    Second one.",
+		"",
+		"── 2 files changed  +5 -1 " + strings.Repeat("─", 74),
+		"    ui.go          +5 -1",
+		"    docs/demo.gif  binary",
 	}, "\n")
 	if got != want {
 		t.Errorf("header:\n%s\nwant:\n%s", got, want)
 	}
 	loading := ansi.Strip(previewHeader(&c, nil, 100))
-	if !strings.Contains(loading, "Stat:   …") || strings.Contains(loading, "First") {
+	if strings.Contains(loading, "changed") || strings.Contains(loading, "First") || !strings.Contains(loading, "Date:") {
 		t.Errorf("loading header:\n%s", loading)
 	}
 	for _, l := range strings.Split(ansi.Strip(previewHeader(&c, &d, 40)), "\n") {
 		if ansi.StringWidth(l) > 40 {
 			t.Errorf("line wider than 40: %q", l)
 		}
+	}
+	empty := ansi.Strip(previewHeader(&c, &detail{}, 100))
+	if !strings.HasSuffix(empty, "\n── no changes "+strings.Repeat("─", 86)) {
+		t.Errorf("an empty commit says so in the section title:\n%s", empty)
+	}
+}
+
+func TestPreviewHeaderVariants(t *testing.T) {
+	m := mustParse(t, recP(strings.Repeat("c", 40), "ccccccc", "A", "a@b", "01/01/2026 00:00", "",
+		strings.Repeat("a", 40)+" "+strings.Repeat("b", 40), "1", "Merge branch x"))
+	if h := ansi.Strip(previewHeader(&m, &detail{}, 100)); !strings.Contains(h, "Merge:  aaaaaaa bbbbbbb") {
+		t.Errorf("merge header:\n%s", h)
+	}
+	var many []fileStat
+	for i := range maxHeaderFiles + 3 {
+		many = append(many, fileStat{path: fmt.Sprintf("deep/nested/directory/structure/file%02d.go", i), added: 1})
+	}
+	h := ansi.Strip(previewHeader(&m, &detail{files: many}, 80))
+	if !strings.Contains(h, "… 3 more files") || !strings.Contains(h, "    deep/nested/directory/structure/file49.go  +1 -0") ||
+		strings.Contains(h, "file50.go") {
+		t.Errorf("the list is only capped past %d files:\n%s", maxHeaderFiles, h)
+	}
+}
+
+func TestFileListNeverCutsPaths(t *testing.T) {
+	long := "a/very/long/path/that/does/not/fit/the/line/at/all/component.tsx"
+	files := []fileStat{{path: "ui.go", added: 120, deleted: 30}, {path: "internal/preview/header.go", added: 1}, {path: long, added: 2, deleted: 2}}
+	for _, w := range []int{100, 44, 30} {
+		lines := fileList(files, w)
+		joined := strings.ReplaceAll(strings.ReplaceAll(ansi.Strip(strings.Join(lines, "")), " ", ""), "+", " +")
+		for _, f := range files {
+			if !strings.Contains(joined, f.path) {
+				t.Errorf("width %d: %q was cut:\n%s", w, f.path, ansi.Strip(strings.Join(lines, "\n")))
+			}
+		}
+		for _, l := range lines {
+			if ansi.StringWidth(l) > w || strings.Contains(l, "…") {
+				t.Errorf("width %d: bad line %q", w, ansi.Strip(l))
+			}
+		}
+	}
+	// Wide enough: one aligned column. Narrow: the long path takes its own
+	// line(s) and the short ones stay aligned.
+	if got := ansi.Strip(strings.Join(fileList(files, 100), "\n")); got != "    ui.go"+strings.Repeat(" ", len(long)-5)+"  +120 -30\n"+
+		"    internal/preview/header.go"+strings.Repeat(" ", len(long)-26)+"    +1  -0\n    "+long+"    +2  -2" {
+		t.Errorf("aligned list:\n%s", got)
+	}
+	narrow := strings.Split(ansi.Strip(strings.Join(fileList(files, 44), "\n")), "\n")
+	if narrow[0] != "    ui.go"+strings.Repeat(" ", 25)+"  +120 -30" || len(narrow) != 4 || narrow[1] != "    internal/preview/header.go        +1  -0" || !strings.HasSuffix(narrow[3], "    +2  -2") {
+		t.Errorf("narrow list:\n%s", strings.Join(narrow, "\n"))
+	}
+	wt, _ := parseCommit(recP("", wtShort, "", "", "01/01/2026 00:00", "", "", "1", "Uncommitted changes"))
+	wt.wt = true
+	h := ansi.Strip(previewHeader(&wt, &detail{files: files[:1], added: 1, untracked: []string{"new.txt"}}, 80))
+	if !strings.HasPrefix(h, "Working tree") || !strings.Contains(h, "── 1 file changed  +1 -0 ─") || !strings.Contains(h, "── 1 untracked ─") ||
+		!strings.Contains(h, "    new.txt") || strings.Contains(h, "Author") {
+		t.Errorf("working tree header:\n%s", h)
+	}
+}
+
+func TestFileLines(t *testing.T) {
+	rule := strings.Repeat("─", 40)
+	content := strings.Join([]string{"commit abc", "", "\x1b[34mui.go\x1b[0m", "\x1b[34m" + rule + "\x1b[0m", "│ 1 │x", rule, "", "list.go", rule, "diff --git a/x b/x"}, "\n")
+	// The rule right under a diff line (index 5) is content, not a file header.
+	if got := fileLines(content); !sameInts(got, []int{2, 7, 9}) {
+		t.Errorf("fileLines = %v, want [2 7 9]", got)
 	}
 }
 
@@ -384,22 +565,43 @@ func gitRepo(t *testing.T) string {
 	run("commit", "-q", "-m", "second commit", "-m", "With a body.\nOn two lines.")
 	run("tag", "v1")
 	run("commit", "-q", "--allow-empty", "-m", "empty one")
+	// A side branch merged without conflicts: git show's combined diff is empty.
+	run("switch", "-q", "-c", "side", "HEAD~1")
+	write("side.txt", "side\n")
+	run("add", ".")
+	run("commit", "-q", "-m", "side work")
+	run("switch", "-q", "main")
+	run("merge", "-q", "--no-ff", "-m", "Merge branch 'side'", "side")
 	t.Chdir(dir)
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_CONFIG_SYSTEM", "/dev/null")
 	return dir
 }
 
-func collectLog(t *testing.T) []commit {
+func collectLog(t *testing.T, opts logOpts) []commit {
 	t.Helper()
 	var all []commit
-	for b := range streamLog(context.Background()) {
+	for b := range streamLog(context.Background(), opts, 7) {
 		if b.err != nil {
 			t.Fatalf("streamLog: %v", b.err)
+		}
+		if b.gen != 7 {
+			t.Fatalf("batch generation = %d", b.gen)
 		}
 		all = append(all, b.commits...)
 	}
 	return all
+}
+
+func bySubject(t *testing.T, cs []commit, subject string) *commit {
+	t.Helper()
+	for i := range cs {
+		if cs[i].subject() == subject {
+			return &cs[i]
+		}
+	}
+	t.Fatalf("no commit %q", subject)
+	return nil
 }
 
 func TestStreamLogAndDetail(t *testing.T) {
@@ -407,40 +609,99 @@ func TestStreamLogAndDetail(t *testing.T) {
 	if !insideWorkTree() {
 		t.Fatal("insideWorkTree = false in a repo")
 	}
-	cs := collectLog(t)
-	if len(cs) != 3 {
-		t.Fatalf("got %d commits, want 3", len(cs))
+	cs := collectLog(t, logOpts{})
+	if len(cs) != 5 {
+		t.Fatalf("got %d commits, want 5", len(cs))
 	}
-	if cs[0].subject() != "empty one" || cs[2].subject() != "first commit" {
-		t.Errorf("order/subjects wrong: %q .. %q", cs[0].subject(), cs[2].subject())
+	if cs[0].subject() != "Merge branch 'side'" || cs[4].subject() != "first commit" {
+		t.Errorf("order/subjects wrong: %q .. %q", cs[0].subject(), cs[4].subject())
 	}
-	if len(cs[0].refs) != 1 || !cs[0].refs[0].head || cs[0].refs[0].text != "main" {
-		t.Errorf("HEAD refs = %+v", cs[0].refs)
+	if len(cs[0].refs) != 1 || !cs[0].refs[0].head || cs[0].refs[0].text != "main" || !cs[0].merge() {
+		t.Errorf("HEAD = %+v", cs[0])
 	}
-	if len(cs[1].refs) != 1 || cs[1].refs[0].text != "tag: v1" {
-		t.Errorf("tag refs = %+v", cs[1].refs)
+	second := bySubject(t, cs, "second commit")
+	if len(second.refs) != 1 || second.refs[0].text != "tag: v1" || second.merge() {
+		t.Errorf("tag refs = %+v", second.refs)
 	}
-	if cs[1].author() != "Ada" || cs[1].email() != "ada@x.io" || len(cs[1].hash) != 40 {
-		t.Errorf("fields wrong: %+v", cs[1])
+	if second.author() != "Ada" || second.email() != "ada@x.io" || len(second.hash) != 40 || second.when == 0 {
+		t.Errorf("fields wrong: %+v", second)
 	}
-	if len(cs[1].date()) != 10 || !strings.HasSuffix(cs[1].date(), "/03/2026") {
-		t.Errorf("date = %q", cs[1].date())
+	if len(second.date()) != 10 || !strings.HasSuffix(second.date(), "/03/2026") {
+		t.Errorf("date = %q", second.date())
 	}
 
-	d, err := loadDetail(context.Background(), cs[1].hash)
+	ctx := context.Background()
+	d, err := loadDetail(ctx, second, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (detail{body: "With a body.\nOn two lines.", files: 2, added: 3, deleted: 1}); d != want {
+	want := detail{body: "With a body.\nOn two lines.", added: 3, deleted: 1,
+		files: []fileStat{{path: "a.txt", added: 2, deleted: 1}, {path: "b.txt", added: 1}}}
+	if !reflect.DeepEqual(d, want) {
 		t.Errorf("detail = %+v, want %+v", d, want)
 	}
-	if d, _ := loadDetail(context.Background(), cs[0].hash); d != (detail{}) {
+	if d, _ := loadDetail(ctx, second, []string{"b.txt"}); len(d.files) != 1 || d.files[0].path != "b.txt" {
+		t.Errorf("path-limited detail = %+v", d)
+	}
+	if d, _ := loadDetail(ctx, bySubject(t, cs, "empty one"), nil); len(d.files) != 0 {
 		t.Errorf("empty commit detail = %+v", d)
+	}
+	// A merge is compared against its first parent.
+	if d, _ := loadDetail(ctx, &cs[0], nil); len(d.files) != 1 || d.files[0].path != "side.txt" {
+		t.Errorf("merge detail = %+v", d)
+	}
+	if diff, err := renderDiff(ctx, &cs[0], 80, false, "", nil); err != nil || !strings.Contains(ansi.Strip(diff), "+side") {
+		t.Errorf("merge diff = %q, %v", ansi.Strip(diff), err)
 	}
 
 	ri := loadRepoInfo()
-	if real, _ := filepath.EvalSymlinks(dir); ri.Top != real || ri.Branch != "main" || ri.Upstream != "" {
+	if real, _ := filepath.EvalSymlinks(dir); ri.Top != real || ri.Branch != "main" || ri.Upstream != "" || ri.WebURL != "" {
 		t.Errorf("repoInfo = %+v", ri)
+	}
+}
+
+func TestLogScopes(t *testing.T) {
+	gitRepo(t)
+	if out, err := exec.Command("git", "switch", "-q", "-c", "other", "HEAD~1").CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if n := len(collectLog(t, logOpts{})); n != 3 {
+		t.Errorf("current branch: %d commits, want 3", n)
+	}
+	if n := len(collectLog(t, logOpts{all: true})); n != 5 {
+		t.Errorf("--all: %d commits, want 5", n)
+	}
+	if cs := collectLog(t, logOpts{all: true, paths: []string{"b.txt"}}); len(cs) != 1 || cs[0].subject() != "second commit" {
+		t.Errorf("path scope = %d commits", len(cs))
+	}
+	if cs := collectLog(t, logOpts{all: true, pickaxe: "three"}); len(cs) != 1 || cs[0].subject() != "second commit" {
+		t.Errorf("pickaxe scope = %d commits", len(cs))
+	}
+	if cs := collectLog(t, logOpts{revs: []string{"main", "^other"}}); len(cs) != 2 {
+		t.Errorf("revision range = %d commits, want 2", len(cs))
+	}
+}
+
+func TestWorkTreeRow(t *testing.T) {
+	dir := gitRepo(t)
+	if cs := collectLog(t, logOpts{}); cs[0].wt {
+		t.Fatal("a clean tree has no working tree row")
+	}
+	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\n2\nthree\nfour\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "untracked.txt"), []byte("x\n"), 0o644)
+	cs := collectLog(t, logOpts{})
+	if !cs[0].wt || cs[0].short() != wtShort || cs[0].subject() != "Uncommitted changes (2 files)" || len(cs) != 6 {
+		t.Fatalf("working tree row = %+v (of %d)", cs[0], len(cs))
+	}
+	d, err := loadDetail(context.Background(), &cs[0], nil)
+	if err != nil || len(d.files) != 1 || d.added != 1 || !reflect.DeepEqual(d.untracked, []string{"untracked.txt"}) {
+		t.Errorf("working tree detail = %+v, %v", d, err)
+	}
+	if diff, err := renderDiff(context.Background(), &cs[0], 80, false, "", nil); err != nil || !strings.Contains(ansi.Strip(diff), "+four") {
+		t.Errorf("working tree diff = %q, %v", ansi.Strip(diff), err)
+	}
+	if cs := collectLog(t, logOpts{pickaxe: "three"}); cs[0].wt {
+		t.Error("a content search has no working tree row")
 	}
 }
 
@@ -451,7 +712,7 @@ func TestStreamLogReportsEmptyRepo(t *testing.T) {
 	}
 	t.Chdir(dir)
 	var last logBatch
-	for b := range streamLog(context.Background()) {
+	for b := range streamLog(context.Background(), logOpts{}, 0) {
 		last = b
 	}
 	if !last.done || last.err == nil {
@@ -461,15 +722,18 @@ func TestStreamLogReportsEmptyRepo(t *testing.T) {
 
 func TestRenderDiffFallsBackWithoutDelta(t *testing.T) {
 	gitRepo(t)
-	cs := collectLog(t)
-	out, err := renderDiff(context.Background(), cs[1].hash, 80, true, "")
+	cs := collectLog(t, logOpts{})
+	out, err := renderDiff(context.Background(), bySubject(t, cs, "second commit"), 80, true, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if plain := ansi.Strip(out); !strings.Contains(plain, "+three") || !strings.Contains(plain, "b.txt") {
 		t.Errorf("fallback diff:\n%s", plain)
 	}
-	if empty, err := renderDiff(context.Background(), cs[0].hash, 80, true, ""); err != nil || empty != "" {
+	if len(fileLines(out)) != 2 {
+		t.Errorf("fileLines on plain git output = %v", fileLines(out))
+	}
+	if empty, err := renderDiff(context.Background(), bySubject(t, cs, "empty one"), 80, true, "", nil); err != nil || empty != "" {
 		t.Errorf("empty commit diff = %q, %v", empty, err)
 	}
 }
@@ -480,9 +744,9 @@ func TestRenderDiffWithDelta(t *testing.T) {
 		t.Skip("delta not installed")
 	}
 	gitRepo(t)
-	cs := collectLog(t)
+	second := bySubject(t, collectLog(t, logOpts{}), "second commit")
 	for _, sbs := range []bool{true, false} {
-		out, err := renderDiff(context.Background(), cs[1].hash, 90, sbs, deltaBin)
+		out, err := renderDiff(context.Background(), second, 90, sbs, deltaBin, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -493,6 +757,9 @@ func TestRenderDiffWithDelta(t *testing.T) {
 			if w := ansi.StringWidth(l); w > 90 {
 				t.Errorf("sbs=%v: line is %d cells, over --width=90", sbs, w)
 			}
+		}
+		if files := fileLines(out); len(files) != 2 {
+			t.Errorf("sbs=%v: delta file headers found at %v, want 2", sbs, files)
 		}
 	}
 }

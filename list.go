@@ -4,15 +4,16 @@ package main
 // commit's search corpus) laid out for the list width at render time. Two
 // formats, tied to the layout:
 //
-//   - wide (rows layout): hash, author <email>, subject, refs, date. Name and
-//     email get fixed widths (15 + 14; the email is a quick hint, not meant
-//     to be read whole), refs sit in their own right-aligned 28-wide column
-//     before the date, and the subject takes what is left, so every column
-//     starts at the same place on every row.
-//   - compact (columns layout): hash, date, subject. Author, refs and stats
-//     are in the preview header right next to it.
+//   - wide (rows layout): hash, author, subject, refs, date. The author column
+//     is as wide as the longest name loaded (up to 15). Refs only take the
+//     room they need, right-aligned against the date, and the subject gets
+//     everything else, so every column starts at the same place on every row.
+//     The email is not shown (the preview header has it) but stays searchable.
+//   - compact (columns layout): hash, relative date, subject. Author, refs and
+//     stats are in the preview header right next to it.
 
 import (
+	"strconv"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -20,12 +21,11 @@ import (
 )
 
 const (
-	gutterW  = 2 // "▌ " on the selected row
-	authorW  = 15
-	emailW   = 14
-	refsW    = 28
-	dateW    = 10
-	minSubjW = 20 // below this the wide format starts dropping columns
+	gutterW    = 2 // "▌ " on the selected row
+	maxAuthorW = 15
+	dateW      = 10
+	relDateW   = 4
+	minSubjW   = 24 // below this the wide format drops the author column
 )
 
 // seg is a run of text with one style. off is the byte offset of text in the
@@ -112,54 +112,91 @@ func refSegs(c *commit) []seg {
 	return segs
 }
 
-// rowSegs builds one list row, exactly width cells wide. hashW is the widest
-// short hash loaded so far (git lengthens ambiguous abbreviations).
-func rowSegs(c *commit, width, hashW int, compact, selected bool) []seg {
+// relDate is a compact age ("now", "5m", "3h", "2d", "3w", "5mo", "2y").
+func relDate(when, now int64) string {
+	d := now - when
+	switch {
+	case d < 60:
+		return "now"
+	case d < 3600:
+		return strconv.FormatInt(d/60, 10) + "m"
+	case d < 86400:
+		return strconv.FormatInt(d/3600, 10) + "h"
+	case d < 14*86400:
+		return strconv.FormatInt(d/86400, 10) + "d"
+	case d < 60*86400:
+		return strconv.FormatInt(d/(7*86400), 10) + "w"
+	case d < 365*86400:
+		return strconv.FormatInt(d/(30*86400), 10) + "mo"
+	}
+	return strconv.FormatInt(d/(365*86400), 10) + "y"
+}
+
+// rowLayout is what a row needs to know about the list it is drawn in.
+type rowLayout struct {
+	width   int
+	hashW   int   // widest short hash loaded (git lengthens ambiguous ones)
+	authorW int   // widest author name loaded, capped at maxAuthorW
+	compact bool  // columns layout
+	now     int64 // reference for relative dates
+}
+
+// rowSegs builds one list row, exactly l.width cells wide.
+func rowSegs(c *commit, l rowLayout, selected bool) []seg {
 	gutter := seg{text: "  ", off: -1}
 	if selected {
 		gutter = seg{text: "▌ ", st: stCursor, off: -1}
 	}
 	space := seg{text: " ", off: -1}
-	hash := fitSegs([]seg{{text: c.short(), st: stHash, off: 0}}, hashW, false)
-	date := seg{text: c.date(), st: stDate, off: c.oDate}
-	subject := []seg{{text: c.subject(), off: c.oSubject}}
+	subjSt := lipgloss.NewStyle()
+	switch {
+	case c.wt:
+		subjSt = stWorkTree
+	case c.merge():
+		subjSt = stMerge
+	}
+	subject := []seg{{text: c.subject(), st: subjSt, off: c.oSubject}}
 
 	row := []seg{gutter}
-	row = append(row, hash...)
+	row = append(row, fitSegs([]seg{{text: c.short(), st: stHash, off: 0}}, l.hashW, false)...)
 	row = append(row, space)
-	rest := width - gutterW - hashW - 1
+	rest := l.width - gutterW - l.hashW - 1
 
-	if compact {
-		row = append(row, date, space)
-		row = append(row, fitSegs(subject, rest-dateW-1, false)...)
-		return fitSegs(row, width, false)
-	}
-
-	// Narrow terminals drop the refs column first, then the author.
-	subjW := rest - (authorW + emailW + 4) - (refsW + 1) - (dateW + 1)
-	showRefs, showAuthor := true, true
-	if subjW < minSubjW {
-		showRefs = false
-		subjW += refsW + 1
-	}
-	if subjW < minSubjW {
-		showAuthor = false
-		subjW += authorW + emailW + 4
-	}
-	if showAuthor {
-		row = append(row, fitSegs([]seg{{text: c.author(), st: stAuthor, off: c.oAuthor}}, authorW, false)...)
-		row = append(row, seg{text: " <", st: stAuthor, off: c.oEmail - 2})
-		row = append(row, fitSegs([]seg{{text: c.email(), st: stAuthor, off: c.oEmail}}, emailW, false)...)
-		row = append(row, seg{text: ">", st: stAuthor, off: c.oSubject - 2}, space)
-	}
-	row = append(row, fitSegs(subject, subjW, false)...)
-	row = append(row, space)
-	if showRefs {
-		row = append(row, fitSegs(refSegs(c), refsW, true)...)
+	if l.compact {
+		age := ""
+		if !c.wt {
+			age = relDate(c.when, l.now)
+		}
+		row = append(row, fitSegs([]seg{{text: age, st: stDate, off: -1}}, relDateW, true)...)
 		row = append(row, space)
+		row = append(row, fitSegs(subject, rest-relDateW-1, false)...)
+		return fitSegs(row, l.width, false)
+	}
+
+	// A narrow list drops the author.
+	subjW := rest - (l.authorW + 1) - (dateW + 1)
+	if l.authorW > 0 && subjW >= minSubjW {
+		row = append(row, fitSegs([]seg{{text: c.author(), st: stAuthor, off: c.oAuthor}}, l.authorW, false)...)
+		row = append(row, space)
+	} else {
+		subjW = rest - (dateW + 1)
+	}
+	// Refs take what they need, up to 45% of the subject area.
+	if refs := refSegs(c); len(refs) > 0 && subjW > 12 {
+		refsW := min(segsWidth(refs), subjW*45/100)
+		row = append(row, fitSegs(subject, subjW-refsW-1, false)...)
+		row = append(row, space)
+		row = append(row, fitSegs(refs, refsW, true)...)
+	} else {
+		row = append(row, fitSegs(subject, subjW, false)...)
+	}
+	row = append(row, space)
+	date := seg{text: c.date(), st: stDate, off: c.oDate}
+	if c.wt {
+		date = pad(dateW)
 	}
 	row = append(row, date)
-	return fitSegs(row, width, false)
+	return fitSegs(row, l.width, false)
 }
 
 // renderSegs styles a row. matched holds corpus byte offsets to highlight;

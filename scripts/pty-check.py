@@ -4,11 +4,12 @@
 Spawns the binary on a pty inside a throwaway git repository, answers the
 terminal queries bubbletea sends (OSC 10/11, CSI 6n, DA1), replays keystrokes,
 SGR mouse reports and resizes, and asserts on frames rendered with pyte. The
-settings go to a sandboxed XDG_STATE_HOME, so the real ones are never touched.
+settings go to a sandboxed XDG_STATE_HOME and the clipboard/browser to logging
+stubs, so nothing real is touched.
 
 Usage: scripts/pty-check.py ./asgitlog   (needs python3 + pyte, git, delta)
 """
-import fcntl, json, os, pty, select, shutil, signal, struct, subprocess, sys, tempfile, termios, time
+import fcntl, json, os, pty, re, select, shutil, signal, struct, subprocess, sys, tempfile, termios, time
 import pyte
 
 BIN = os.path.abspath(sys.argv[1])
@@ -16,52 +17,100 @@ ROWS, COLS = 40, 160
 SANDBOX = os.path.realpath(tempfile.mkdtemp(prefix="asgitlog-pty-"))
 REPO = os.path.join(SANDBOX, "repo")
 STATE = os.path.join(SANDBOX, "state")
-NCOMMITS = 60
+LINEAR = 60            # commits on the straight part of main
+ON_MAIN = LINEAR + 2   # + the side branch's commit and its merge
+ALL = ON_MAIN + 1      # + a branch that was never merged
 
 # ---------- sandbox: a repository with a predictable history ----------
 GIT_ENV = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null",
                GIT_AUTHOR_NAME="Ada Lovelace", GIT_AUTHOR_EMAIL="ada@example.com",
                GIT_COMMITTER_NAME="Ada Lovelace", GIT_COMMITTER_EMAIL="ada@example.com")
 
-def git(*args):
-    subprocess.run(["git", "-C", REPO] + list(args), check=True, env=GIT_ENV,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def git(*args, date=None):
+    env = dict(GIT_ENV)
+    if date: env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = date
+    return subprocess.run(["git", "-C", REPO] + list(args), check=True, env=env, capture_output=True, text=True).stdout.strip()
+
+def write(name, text):
+    with open(os.path.join(REPO, name), "w") as f: f.write(text)
+
+def file_txt(i):
+    return "".join("line %02d of revision %02d\n" % (n, i if n % 10 == i % 10 else 0) for n in range(80))
 
 os.makedirs(REPO); os.makedirs(STATE)
 git("init", "-q", "-b", "main")
-for i in range(NCOMMITS):
-    with open(os.path.join(REPO, "file.txt"), "w") as f:
-        f.write("".join("line %02d of revision %02d\n" % (n, i if n % 10 == i % 10 else 0) for n in range(80)))
+git("remote", "add", "origin", "git@github.com:acme/widgets.git")
+for i in range(LINEAR):
+    write("file.txt", file_txt(i))
+    if i % 5 == 0: write("other.txt", "other %02d\n" % i)   # every fifth commit touches two files
     git("add", ".")
-    subject = "feat: change number %02d" % i
-    if i == 30: subject = "fix: the needle commit"
-    env_date = "2026-03-%02dT10:%02d:00+0000" % (1 + i % 28, i % 60)
-    GIT_ENV["GIT_AUTHOR_DATE"] = GIT_ENV["GIT_COMMITTER_DATE"] = env_date
-    git("commit", "-q", "-m", subject, "-m", "Body of commit %02d." % i)
-git("tag", "v1.0", "HEAD~1")
+    subject = "fix: the needle commit" if i == 30 else "feat: change number %02d" % i
+    git("commit", "-q", "-m", subject, "-m", "Body of commit %02d." % i, date="2026-03-%02dT10:%02d:00+0000" % (1 + i % 28, i % 60))
+git("switch", "-q", "-c", "other", "HEAD~10")
+write("unmerged.txt", "x\n"); git("add", "."); git("commit", "-q", "-m", "chore: never merged", date="2026-04-01T10:00:00+0000")
+git("switch", "-q", "-c", "side", "main")
+write("side.txt", "side\n"); git("add", "."); git("commit", "-q", "-m", "feat: side work", date="2026-04-02T10:00:00+0000")
+git("switch", "-q", "main")
+git("merge", "-q", "--no-ff", "-m", "Merge branch 'side'", "side", date="2026-04-03T10:00:00+0000")
+git("tag", "v1.0", "HEAD~2")
 
-def short(rev):
-    return subprocess.run(["git", "-C", REPO, "rev-parse", "--short", rev], check=True, env=GIT_ENV,
-                          capture_output=True, text=True).stdout.strip()
-HEAD, HEAD1, HEAD2, NEEDLE = short("HEAD"), short("HEAD~1"), short("HEAD~2"), short("HEAD~29")
+def short(rev): return git("rev-parse", "--short", rev)
+def full(rev): return git("rev-parse", rev)
+# HEAD is the merge; its first parent is commit 59 of the straight part.
+HEAD, SIDE, C59 = short("HEAD"), short("side"), short("HEAD~1")
+NEEDLE, NEEDLE_FULL = short("HEAD~30"), full("HEAD~30")
+
+# ---------- stubs for the clipboard and the browser ----------
+STUBLOG = os.path.join(SANDBOX, "stub.log")
+STUB = os.path.join(SANDBOX, "stub")
+with open(STUB, "w") as f: f.write('#!/bin/sh\n{ echo "args:$*"; [ -t 0 ] || cat; echo; } >> "%s"\n' % STUBLOG)
+os.chmod(STUB, 0o755)
+def stublog():
+    try: return open(STUBLOG).read()
+    except OSError: return ""
 
 # ---------- pty plumbing ----------
+class Screen(pyte.Screen):
+    # pyte chokes on the "private" flag of a couple of CSI sequences.
+    def report_device_status(self, *a, **k): pass
+    def set_margins(self, *a, **k):
+        k.pop("private", None); return super().set_margins(*a, **k)
+
+    # pyte has no SU/SD (CSI n S / CSI n T), which bubbletea's renderer uses to
+    # scroll a region instead of repainting it. Built on index/reverse_index,
+    # which already honor the margins.
+    def _scroll(self, count, line, step):
+        x, y = self.cursor.x, self.cursor.y
+        for _ in range(count or 1):
+            self.cursor.y = line
+            step()
+        self.cursor.x, self.cursor.y = x, y
+    def scroll_up(self, count=1, **k):
+        bottom = self.margins.bottom if self.margins else self.lines - 1
+        self._scroll(count, bottom, self.index)
+    def scroll_down(self, count=1, **k):
+        top = self.margins.top if self.margins else 0
+        self._scroll(count, top, self.reverse_index)
+
+pyte.Stream.csi = dict(pyte.Stream.csi, S="scroll_up", T="scroll_down")
+
 class Term:
-    def __init__(self, cwd, extra_env=None, rows=ROWS, cols=COLS):
+    def __init__(self, cwd, args=(), extra_env=None, rows=ROWS, cols=COLS):
         env = dict(os.environ, TERM="xterm-256color", COLORTERM="truecolor", XDG_STATE_HOME=STATE,
-                   GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null")
+                   GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null",
+                   ASGITLOG_CLIPBOARD=STUB, ASGITLOG_OPENER=STUB)
         for k in [k for k in env if k.startswith("HERDR_")]: env.pop(k)
         env.update(extra_env or {})
         self.master, slave = pty.openpty()
         self.resize(rows, cols, signal_proc=False)
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
-        self.proc = subprocess.Popen([BIN], stdin=slave, stdout=slave, stderr=slave, env=env, close_fds=True, cwd=cwd)
+        self.proc = subprocess.Popen([BIN] + list(args), stdin=slave, stdout=slave, stderr=slave, env=env, close_fds=True, cwd=cwd)
         os.close(slave)
         self.raw = bytearray(); self.answered = 0
 
     def resize(self, rows, cols, signal_proc=True):
         self.rows, self.cols = rows, cols
-        self.screen = pyte.Screen(cols, rows); self.stream = pyte.ByteStream(self.screen)
+        self.screen = Screen(cols, rows); self.stream = pyte.ByteStream(self.screen)
         if signal_proc:
             fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
             self.proc.send_signal(signal.SIGWINCH)
@@ -113,119 +162,201 @@ def dump(title, f):
     for i, l in enumerate(f): print("%2d|%s" % (i, l))
 
 def has(f, text): return any(text in l for l in f)
+def selected(f): return [l for l in f if l.startswith("│▌ ")]
+def counter(f, text): return f[COUNTER].endswith(" " + text + " ─╮")
 def pref(name):
     try: return open(os.path.join(STATE, "asgitlog", name)).read().strip()
     except OSError: return None
 
 PROMPT = "asgitlog (dev) ❯"
-UP, DOWN, ESC, ENTER, CTRL_L, CTRL_T, BACKSPACE = b"\x1b[A", b"\x1b[B", b"\x1b", b"\r", b"\x0c", b"\x14", b"\x7f"
+UP, DOWN, RIGHT, ESC, ENTER, TAB, BACKSPACE = b"\x1b[A", b"\x1b[B", b"\x1b[C", b"\x1b", b"\r", b"\t", b"\x7f"
+CTRL_A, CTRL_C, CTRL_G, CTRL_L, CTRL_O, CTRL_T, CTRL_Y, SHIFT_RIGHT = b"\x01", b"\x03", b"\x07", b"\x0c", b"\x0f", b"\x14", b"\x19", b"\x1b[1;2C"
 
-# ---------- 1. browsing in the rows layout ----------
+# Rows layout at 40 lines, four boxes: summary 0-2, input 3-5 (counter on its
+# top edge), main 6-36 (list 7-14 with the newest at 14, divider 15, details
+# 16-35), help 37-39.
+INFO, COUNTER, INPUT, LIST_TOP, NEWEST, DIVIDER, BOTTOM, HELP = 1, 3, 4, 7, 14, 15, 36, 38
+
+# ---------- 1. the rows layout ----------
 print("== asgitlog pty driver (%dx%d) ==" % (COLS, ROWS))
 t = Term(REPO)
-check(t.wait_for("of revision 59"), "first preview rendered by delta")
+check(t.wait_for("side.txt"), "first preview rendered by delta")
+t.pump(0.5)
 f0 = t.frame(); dump("initial frame (rows layout)", f0)
-check(f0[0].startswith(PROMPT), "prompt on the first line: %r" % f0[0][:30])
-check(f0[0].endswith(str(NCOMMITS)), "commit counter on the input line: %r" % f0[0][-12:])
-check(f0[1].startswith("▌ " + HEAD + " Ada Lovelace    <ada@example.c…> feat: change number 59"), "wide row: hash, author <email>, subject")
-check(f0[1].endswith("HEAD -> main " + f0[1][-10:]) and f0[1][-10:].count("/") == 2, "wide row: refs right before the dd/mm/yyyy date: %r" % f0[1][-30:])
-check("tag: v1.0" in f0[2], "tag decoration on its commit")
-check(has(f0, "── side-by-side ─"), "preview label shows the diff mode")
-check(has(f0, "commit ") and has(f0, "Author: Ada Lovelace <ada@example.com>"), "native header: commit + author")
-check(has(f0, "Stat:   1 file, +16 -16"), "native header: stat line")
-check(has(f0, "Body of commit 59."), "native header: body")
-check(sum(l.count("│") for l in f0) > 20, "side-by-side diff panels drawn")
-check(f0[-2].startswith(REPO.replace(os.path.expanduser("~"), "~") + "  main") or "  main" in f0[-2], "repo summary line: %r" % f0[-2])
-check("full diff" in f0[-1] and "layout" in f0[-1], "help line: %r" % f0[-1])
+check(f0[0].startswith("╭─") and f0[INFO].startswith("│ ") and f0[INFO].rstrip("│ ").endswith("/repo  main") and f0[2].startswith("╰─"), "repo summary in its own box: %r" % f0[INFO][-40:])
+check(all(len(l) == COLS for l in f0), "every line spans the full width")
+check(f0[NEWEST].startswith("│▌ " + HEAD + " Ada Lovelace Merge branch 'side'"), "bottom-up list, wide row: hash, author, subject (no email)")
+check(re.search(r"  HEAD -> main \d\d/\d\d/\d{4}│$", f0[NEWEST]) is not None, "refs take what they need, right before the date: %r" % f0[NEWEST][-32:])
+check(f0[NEWEST - 1].startswith("│  " + SIDE + " Ada Lovelace feat: side work") and "side" in f0[NEWEST - 1][-21:], "older commits go up")
+check("tag: v1.0" in f0[NEWEST - 3], "tag decoration on its commit")
+check(counter(f0, "%d/%d" % (ON_MAIN, ON_MAIN)) and f0[INPUT].startswith("│ " + PROMPT), "input box above the list, counter on its edge")
+check(f0[LIST_TOP - 1].startswith("╭─") and f0[DIVIDER].startswith("├─ auto: side-by-side ─") and f0[DIVIDER].endswith("─┤"), "list and details share a box; the divider says auto resolved to side-by-side")
+check(all(l.startswith("│ ") and l.endswith(" │") for l in f0[DIVIDER + 1:BOTTOM]) and f0[BOTTOM].startswith("╰"), "details framed with padding")
+check(has(f0, "Merge:  ") and has(f0, "diff against the first parent") and has(f0, "── 1 file changed  +1 -0 ─") and has(f0, "── diff ─"), "a clean merge shows what it brought in")
+check(f0[HELP - 1].startswith("╭─") and f0[HELP].startswith("│ type filter") and "? help" in f0[HELP] and f0[HELP + 1].startswith("╰─"), "help in its own box: %r" % f0[HELP][:60])
 check(b"\x1b[?1049h" in t.raw, "alt screen entered")
 
-t.send(DOWN)
-check(t.wait_for("Body of commit 58."), "down moves the selection and the preview follows")
-check(t.frame()[2].startswith("▌ " + HEAD1), "marker on the second row")
+t.send(UP); t.send(UP)
+check(t.wait_for("Body of commit 59."), "up moves to older commits and the preview follows")
+t.pump(0.6)
+f = t.frame()
+check(f[NEWEST - 2].startswith("│▌ " + C59), "marker two lines above the newest")
+check(has(f, "── 1 file changed  +16 -16 ─") and sum(l.count("│") for l in f) > 40, "titled file list and side-by-side panels")
+check(re.search(r" \d+/\d+ ─╯$", f[BOTTOM]) is not None, "scroll position on the main box's bottom edge: %r" % f[BOTTOM][-16:])
 
 # wheel scrolls the preview, not the list, and never leaks into the filter
 before = t.frame()
 t.send(b"\x1b[<65;70;30M" * 30, settle=0.6)
 after = t.frame()
-check(after[0] == before[0], "prompt clean after a wheel burst")
-check(after[1:12] == before[1:12], "list unchanged by the wheel")
-check(after[14:36] != before[14:36], "preview scrolled by the wheel")
+check(after[INPUT] == before[INPUT] and after[LIST_TOP:DIVIDER] == before[LIST_TOP:DIVIDER], "wheel: input clean, list unchanged")
+check(after[DIVIDER + 1:BOTTOM] != before[DIVIDER + 1:BOTTOM], "wheel: details scrolled")
+check(after[DIVIDER].startswith("├─ auto: side-by-side  " + C59 + " feat: change number 59 ─"), "scrolled: the commit shows on the divider: %r" % after[DIVIDER][:60])
 
-# click selects a row
-t.send(b"\x1b[<0;20;4M\x1b[<0;20;4m")
-check(t.frame()[3].startswith("▌ " + HEAD2), "left click selects the row under the pointer")
+t.send(b"\x1b[<0;20;%dM\x1b[<0;20;%dm" % (NEWEST, NEWEST))   # 1-based: the line above the newest
+check(t.frame()[NEWEST - 1].startswith("│▌ " + SIDE), "left click selects the row under the pointer")
+
+# the wheel over the list walks the history; home comes back to the newest
+t.send(b"\x1b[<64;20;10M" * 3, settle=0.6)   # wheel up = up the screen = older, in this layout
+check("feat: change number 57" in (selected(t.frame()) or [""])[0], "wheel over the list moves the selection: %r" % (selected(t.frame()) or [""])[0][:50])
+t.send(b"\x1b[<64;20;10M" * 40, settle=0.8)
+check("feat: change number 17" in (selected(t.frame()) or [""])[0], "a long wheel burst scrolls far down the history")
+t.send(b"\x1b[H", settle=0.6)
+check(t.frame()[NEWEST].startswith("│▌ " + HEAD), "home jumps back to the newest commit")
+t.send(b"\x1b[F", settle=0.6)
+check("feat: change number 00" in (selected(t.frame()) or [""])[0], "end jumps to the oldest")
+t.send(b"\x1b[1;3B", settle=0.6)   # alt+down, for keyboards without home/end
+check(t.frame()[NEWEST].startswith("│▌ " + HEAD), "alt+down reaches the bottom of the list (the newest, in this layout)")
+t.send(b"\x1b[1;3A", settle=0.6)
+check("feat: change number 00" in (selected(t.frame()) or [""])[0], "alt+up reaches the top of the list")
+t.send(b"\x1b[H", settle=0.6)
 
 # ---------- 2. filter ----------
 t.send(b"needle")
-f = t.frame(); dump("filtered", f[:4])
-check("fix: the needle commit" in f[1] and f[1].startswith("▌ "), "fuzzy filter narrows to the needle commit")
-check(f[0].endswith("1/%d" % NCOMMITS), "counter shows matches/total: %r" % f[0][-10:])
-check(t.wait_for("Body of commit 30."), "preview follows the filtered selection")
-t.send(BACKSPACE * 6)
+f = t.frame(); dump("filtered", f[COUNTER:DIVIDER + 1])
+check(f[NEWEST].startswith("│▌ " + NEEDLE) and "fix: the needle commit" in f[NEWEST], "substring filter narrows to the needle commit")
+check(counter(f, "1/%d" % ON_MAIN), "counter shows matches/total: %r" % f[COUNTER][-14:])
+t.send(BACKSPACE * 6 + b"chng")
+check(counter(t.frame(), "0/%d" % ON_MAIN), "letters in order but apart do not match a plain term")
+t.send(BACKSPACE * 4 + b"~ndl cmmt")
+check(counter(t.frame(), "0/%d" % ON_MAIN), "terms are ANDed (cmmt is not a substring)")
+t.send(BACKSPACE * 4 + b"~cmmt")
 f = t.frame()
-check(f[0].rstrip().endswith(str(NCOMMITS)) and has(f[1:13], "fix: the needle commit") and
-      [l for l in f[1:13] if l.startswith("▌ ")][0].find("needle") > 0, "clearing the query stays on the found commit")
+check(counter(f, "1/%d" % ON_MAIN) and NEEDLE in f[NEWEST], "~terms match fuzzily")
+check(t.wait_for("Body of commit 30."), "preview follows the filtered selection")
+t.send(BACKSPACE * 10)
+f = t.frame()
+check(counter(f, "%d/%d" % (ON_MAIN, ON_MAIN)) and len(selected(f)) == 1 and NEEDLE in selected(f)[0], "clearing the query stays on the found commit")
 
-# ---------- 3. layout and diff mode, persisted ----------
+# ---------- 3. columns layout, diff mode, list size: all persisted ----------
 t.send(CTRL_L, settle=0.8)
-f = t.frame(); dump("columns layout", f[:6])
-sel = [l for l in f[1:-2] if l.startswith("▌ ")]
-check(len(sel) == 1 and "needle" in sel[0], "cursor stays on the same commit across the layout change")
-check(all(" │" in l for l in f[1:-2]), "columns layout: list | preview")
-check(sel and sel[0][2:2 + len(HEAD) + 11].count("/") == 2 and "Ada" not in sel[0].split("│")[0], "compact rows: hash, date, subject")
+f = t.frame(); dump("columns layout", f[:7])
+sel = selected(f)
+check(len(sel) == 1 and NEEDLE in sel[0], "cursor stays on the same commit across the layout change")
+check(f[INPUT].startswith("│ " + PROMPT) and counter(f, "%d/%d" % (ON_MAIN, ON_MAIN)), "columns: same input box, list top-down")
+check(re.match(r"^│  [0-9a-f]+ +\d+(mo|[ymwdh]) (feat|fix): ", f[LIST_TOP]) is not None and "Ada" not in f[LIST_TOP].split("│")[1], "compact rows: hash, relative date, subject: %r" % f[LIST_TOP][:40])
+col = f[LIST_TOP - 1].index("┬")
+check(f[BOTTOM][col] == "┴" and all(l[col] == "│" for l in f[LIST_TOP:BOTTOM]) and "┬─ auto: single column ─" in f[LIST_TOP - 1],
+      "a vertical divider splits the main box, list | details (auto goes single column at this width)")
 check(pref("layout") == "columns", "layout persisted: %r" % pref("layout"))
+edge = col
+t.send(SHIFT_RIGHT, settle=0.8)
+check(t.frame()[LIST_TOP - 1].index("┬") > edge and pref("split-columns") == "70", "shift+right grows the list, persisted: %r" % pref("split-columns"))
 t.send(CTRL_T, settle=0.2)
-check(t.wait_for("── single column ─"), "ctrl+t switches the label to single column")
-check(pref("diff") == "single", "diff mode persisted: %r" % pref("diff"))
+check(t.wait_for("─ side-by-side ─") and pref("diff") == "sbs", "ctrl+t: auto -> side-by-side")
+t.send(CTRL_T, settle=0.2)
+check(t.wait_for("─ single column ─") and pref("diff") == "single", "ctrl+t: side-by-side -> single column")
 t.pump(0.8)
 
-# ---------- 4. resize ----------
 t.resize(30, 110); t.pump(1.0)
-f = t.frame(); dump("after resize to 110x30", f[:4])
-sel = [l for l in f[1:-2] if l.startswith("▌ ")]
-check(len(sel) == 1 and NEEDLE in sel[0], "cursor stays on the same commit across a resize")
-check(f[0].startswith(PROMPT) and "layout" in f[-1], "frame re-laid out for the new size")
+f = t.frame()
+sel = selected(f)
+check(len(sel) == 1 and NEEDLE in sel[0] and f[INPUT].startswith("│ " + PROMPT) and "? help" in f[-2], "resize: re-laid out, same commit selected")
 
-# ---------- 5. full view ----------
+# ---------- 4. full view ----------
 t.send(ENTER, settle=0.2)
 check(t.wait_for("q/esc back"), "enter opens the full-screen diff")
 t.pump(0.8)
 f = t.frame(); dump("full view", f[:8])
-check(not has(f, PROMPT) and "single column" in f[0] and "needle" in f[0], "full view title: %r" % f[0])
-check(has(f, "Body of commit 30."), "full view shows header + diff")
-top = t.frame()[1:6]
+check(not has(f, PROMPT) and NEEDLE in f[0] and "needle" in f[0] and "single column" in f[0], "full view title: %r" % f[0])
+check(has(f, "Body of commit 30.") and has(f, "    other.txt") and f[1] == "─" * 110, "header with the changed files, under a rule")
+top = t.frame()[2:7]
 t.send(b"j"); t.send(b"j"); t.send(b"j")
-check(t.frame()[1:6] != top, "j scrolls the full view")
+check(t.frame()[2:7] != top, "j scrolls")
 t.send(b"G"); check(t.frame()[0].rstrip().endswith("100%"), "G jumps to the bottom")
-t.send(b"g"); check(t.frame()[1:6] == top, "g jumps back to the top")
-t.send(b"/"); t.send(b"line 70 of"); t.send(ENTER)
+t.send(b"g"); check(t.frame()[2:7] == top, "g jumps back to the top")
+t.send(TAB); check(t.frame()[2].startswith("file.txt"), "tab jumps to the first file: %r" % t.frame()[2][:20])
+t.send(TAB)  # the last file is near the end, so it cannot reach the top line
+check(any(l.startswith("other.txt") for l in t.frame()) and t.frame()[0].rstrip().endswith("100%"), "tab again, the next file comes into view")
+t.send(b"\x1b[Z"); check(t.frame()[2].startswith("file.txt"), "shift+tab goes back")
+t.send(b"g/"); t.send(b"line 70 of"); t.send(ENTER)
 f = t.frame()
-check(has(f[1:-1], "line 70 of revision") and "match 1/" in f[0], "search jumps to the first match: %r" % f[0][-40:])
+check(has(f[2:-1], "line 70 of revision") and "match 1/" in f[0], "search jumps to the first match: %r" % f[0][-40:])
 t.send(b"n"); check("match 2/" in t.frame()[0], "n goes to the next match")
 t.send(ESC); check("match" not in t.frame()[0] and not has(t.frame(), PROMPT), "esc clears the search first")
+t.send(b"]", settle=0.2)
+check(t.wait_for("Body of commit 29.") and "change number 29" in t.frame()[0], "] opens the older commit without leaving")
+t.send(b"[", settle=0.2)
+check(t.wait_for("Body of commit 30."), "[ comes back")
+t.send(b"y", settle=0.8)
+check(has(t.frame()[-1:], "copied " + NEEDLE_FULL) and NEEDLE_FULL + "\n" in stublog(), "y copies the full hash: %r" % t.frame()[-1])
+t.send(b"o", settle=0.8)
+check("args:https://github.com/acme/widgets/commit/" + NEEDLE_FULL in stublog(), "o opens the commit page of the remote")
+t.pump(2.2)  # let the "opened ..." status give the last line back to the help
+t.send(b"?")
+f = t.frame()
+check(has(f[-4:], "next / previous match") and has(f[-4:], "copy the hash") and has(f[-4:], "page, half page"),
+      "? expands the help line into the full help, in place")
+check(len([l for l in f[-4:] if l.strip()]) == 4 and NEEDLE in f[0], "the diff stays on screen above it")
+t.send(b"?"); check(has(t.frame()[-1:], "q/esc back") and not has(t.frame(), "page, half page"), "? again folds it")
 t.send(b"q")
-check(t.wait_for(PROMPT, 2.0), "q returns to the list")
-sel = [l for l in t.frame()[1:-2] if l.startswith("▌ ")]
-check(len(sel) == 1 and NEEDLE in sel[0], "selection intact after the full view")
+check(t.wait_for(PROMPT, 2.0) and NEEDLE in (selected(t.frame()) or [""])[0], "q returns to the list, selection intact")
 
-# ---------- 6. exit ----------
 t.send(ESC)
-check(t.wait_exit() == 0, "esc exits with status 0")
-check(b"\x1b[?1049l" in t.raw, "alt screen left on exit")
+check(t.wait_exit() == 0 and b"\x1b[?1049l" in t.raw, "esc exits with status 0 and leaves the alt screen")
 
-# ---------- 7. settings restored on the next run ----------
+# ---------- 5. next run: settings restored; log scopes ----------
 t = Term(REPO)
-check(t.wait_for("── single column ─") and all(" │" in l for l in t.frame()[1:-2]), "next run starts in columns + single column")
-t.send(CTRL_L); t.send(CTRL_T); t.send(b"\x03")
-check(t.wait_exit() == 0 and pref("layout") == "rows" and pref("diff") == "sbs", "ctrl+c exits; settings back to rows + sbs")
+check(t.wait_for("┬─ single column ─"), "next run starts in columns + single column")
+t.send(CTRL_A, settle=1.0)
+f = t.frame()
+check(counter(f, "%d/%d [all refs]" % (ALL, ALL)) and has(f, "chore: never merged"), "ctrl+a lists all refs: %r" % f[COUNTER][-30:])
+t.send(CTRL_A, settle=1.0)
+check(counter(t.frame(), "%d/%d" % (ON_MAIN, ON_MAIN)), "ctrl+a again, back to the current branch")
+t.send(CTRL_G)
+check(has(t.frame(), "search the diffs (-S) ❯"), "ctrl+g asks for the text to search the diffs for")
+t.send(b"revision 47"); t.send(ENTER, settle=1.2)
+f = t.frame(); dump("content search", f[:7])
+check(counter(f, '2/2 [-S"revision 47"]') and "change number 48" in f[LIST_TOP] and "change number 47" in f[LIST_TOP + 1], "only the commits adding or removing the text")
+t.send(CTRL_G); t.send(BACKSPACE * 11); t.send(ENTER, settle=1.0)
+check(counter(t.frame(), "%d/%d" % (ON_MAIN, ON_MAIN)), "an empty text lifts the scope")
+t.send(CTRL_L); t.send(CTRL_T)
+t.send(CTRL_C)
+check(t.wait_exit() == 0 and pref("layout") == "rows" and pref("diff") == "auto", "ctrl+c exits; settings back to rows + auto")
 
-# ---------- 8. outside a repository ----------
+# ---------- 6. revision / path arguments, working tree row ----------
+t = Term(REPO, args=["--", "other.txt"])
+check(t.wait_for("[-- other.txt]"), "paths after -- scope the log")
+f = t.frame()
+check(counter(f, "12/12 [-- other.txt]") and has(f, "── 1 file changed  +1 -1 ─") and not has(f, "file.txt"), "and the preview: %r" % f[COUNTER][-30:])
+t.send(ESC); t.wait_exit()
+
+write("file.txt", file_txt(59) + "one more line\n"); write("scratch.txt", "x\n")
+t = Term(REPO)
+check(t.wait_for("Working tree"), "uncommitted changes get a row of their own")
+t.pump(0.6)
+f = t.frame()
+check(f[NEWEST].startswith("│▌ *") and "Uncommitted changes (2 files)" in f[NEWEST] and HEAD in f[NEWEST - 1], "on top of the newest commit: %r" % f[NEWEST][:50])
+check(has(f, "── 1 file changed  +1 -0 ─") and has(f, "── 1 untracked ─") and has(f, "    scratch.txt") and has(f, "one more line"), "its preview is the diff against HEAD")
+t.send(ESC); t.wait_exit()
+git("checkout", "-q", "--", "file.txt"); os.remove(os.path.join(REPO, "scratch.txt"))
+
+# ---------- 7. outside a repository ----------
 t = Term(SANDBOX, rows=10, cols=80)
 code = t.wait_exit()
 out = bytes(t.raw).decode(errors="replace")
 check(code == 1 and "not inside a git work tree" in out and "\x1b[?1049h" not in out, "plain shell outside a repo: message + exit 1, no TUI")
 
-# ---------- 9. as a herdr plugin pane ----------
+# ---------- 8. as a herdr plugin pane ----------
 pane = {"HERDR_PLUGIN_ENTRYPOINT_ID": "log", "HERDR_PLUGIN_CONTEXT_JSON": json.dumps({"focused_pane_cwd": REPO})}
 t = Term(SANDBOX, extra_env=pane)
 check(t.wait_for("feat: change number 59"), "plugin pane browses the focused pane's repository, not its own cwd")
