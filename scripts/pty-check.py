@@ -4,8 +4,8 @@
 Spawns the binary on a pty inside a throwaway git repository, answers the
 terminal queries bubbletea sends (OSC 10/11, CSI 6n, DA1), replays keystrokes,
 SGR mouse reports and resizes, and asserts on frames rendered with pyte. The
-settings go to a sandboxed XDG_STATE_HOME and the clipboard/browser to logging
-stubs, so nothing real is touched.
+settings and the render cache go to a sandboxed XDG_STATE_HOME/XDG_CACHE_HOME
+and the clipboard/browser to logging stubs, so nothing real is touched.
 
 Usage: scripts/pty-check.py ./asgitlog   (needs python3 + pyte, git, delta)
 """
@@ -17,6 +17,7 @@ ROWS, COLS = 40, 160
 SANDBOX = os.path.realpath(tempfile.mkdtemp(prefix="asgitlog-pty-"))
 REPO = os.path.join(SANDBOX, "repo")
 STATE = os.path.join(SANDBOX, "state")
+CACHE = os.path.join(SANDBOX, "cache")
 LINEAR = 60            # commits on the straight part of main
 ON_MAIN = LINEAR + 2   # + the side branch's commit and its merge
 ALL = ON_MAIN + 1      # + a branch that was never merged
@@ -97,7 +98,7 @@ pyte.Stream.csi = dict(pyte.Stream.csi, S="scroll_up", T="scroll_down")
 class Term:
     def __init__(self, cwd, args=(), extra_env=None, rows=ROWS, cols=COLS):
         env = dict(os.environ, TERM="xterm-256color", COLORTERM="truecolor", XDG_STATE_HOME=STATE,
-                   GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null",
+                   XDG_CACHE_HOME=CACHE, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null",
                    ASGITLOG_CLIPBOARD=STUB, ASGITLOG_OPENER=STUB)
         for k in [k for k in env if k.startswith("HERDR_")]: env.pop(k)
         env.update(extra_env or {})
@@ -163,7 +164,7 @@ def dump(title, f):
 
 def has(f, text): return any(text in l for l in f)
 def selected(f): return [l for l in f if l.startswith("│▌ ")]
-def counter(f, text): return f[COUNTER].endswith(" " + text + " ─╮")
+def counter(f, text): return f[COUNTER].endswith(" " + text + " ─┤")
 def pref(name):
     try: return open(os.path.join(STATE, "asgitlog", name)).read().strip()
     except OSError: return None
@@ -172,10 +173,10 @@ PROMPT = "asgitlog (dev) ❯"
 UP, DOWN, RIGHT, ESC, ENTER, TAB, BACKSPACE = b"\x1b[A", b"\x1b[B", b"\x1b[C", b"\x1b", b"\r", b"\t", b"\x7f"
 CTRL_A, CTRL_C, CTRL_G, CTRL_L, CTRL_O, CTRL_T, CTRL_Y, SHIFT_RIGHT = b"\x01", b"\x03", b"\x07", b"\x0c", b"\x0f", b"\x14", b"\x19", b"\x1b[1;2C"
 
-# Rows layout at 40 lines, four boxes: summary 0-2, input 3-5 (counter on its
-# top edge), main 6-36 (list 7-14, top-down with the newest at 7, divider 15, details
-# 16-35), help 37-39.
-INFO, COUNTER, INPUT, LIST_TOP, NEWEST, DIVIDER, BOTTOM, HELP = 1, 3, 4, 7, 7, 15, 36, 38
+# Rows layout at 40 lines, one frame of four sections sharing their edges:
+# summary 1, input 3 (counter on the edge over it, 2), main 4-37 (list 5-13,
+# top-down with the newest at 5, divider 14, details 15-36), help 38.
+INFO, COUNTER, INPUT, LIST_TOP, NEWEST, DIVIDER, BOTTOM, HELP = 1, 2, 3, 5, 5, 14, 37, 38
 
 # ---------- 1. the rows layout ----------
 print("== asgitlog pty driver (%dx%d) ==" % (COLS, ROWS))
@@ -183,17 +184,18 @@ t = Term(REPO)
 check(t.wait_for("side.txt"), "first preview rendered by delta")
 t.pump(0.5)
 f0 = t.frame(); dump("initial frame (rows layout)", f0)
-check(f0[0].startswith("╭─") and f0[INFO].startswith("│ ") and f0[INFO].rstrip("│ ").endswith("/repo  main") and f0[2].startswith("╰─"), "repo summary in its own box: %r" % f0[INFO][-40:])
+check(f0[0].startswith("╭─") and f0[INFO].startswith("│ ") and f0[INFO].rstrip("│ ").endswith("/repo  main") and f0[COUNTER].startswith("├─"), "repo summary on top, sharing its edge with the input: %r" % f0[INFO][-40:])
 check(all(len(l) == COLS for l in f0), "every line spans the full width")
 check(f0[NEWEST].startswith("│▌ " + HEAD + " Ada Lovelace Merge branch 'side'"), "newest commit first, wide row: hash, author, subject (no email)")
 check(re.search(r"  HEAD -> main \d\d/\d\d/\d{4}│$", f0[NEWEST]) is not None, "refs take what they need, right before the date: %r" % f0[NEWEST][-32:])
 check(f0[NEWEST + 1].startswith("│  " + SIDE + " Ada Lovelace feat: side work") and "side" in f0[NEWEST + 1][-21:], "older commits go down")
 check("tag: v1.0" in f0[NEWEST + 3], "tag decoration on its commit")
-check(counter(f0, "%d/%d" % (ON_MAIN, ON_MAIN)) and f0[INPUT].startswith("│ " + PROMPT), "input box above the list, counter on its edge")
-check(f0[LIST_TOP - 1].startswith("╭─") and f0[DIVIDER].startswith("├─ auto: side-by-side ─") and f0[DIVIDER].endswith("─┤"), "list and details share a box; the divider says auto resolved to side-by-side")
-check(all(l.startswith("│ ") and l.endswith(" │") for l in f0[DIVIDER + 1:BOTTOM]) and f0[BOTTOM].startswith("╰"), "details framed with padding")
+check(counter(f0, "%d/%d" % (ON_MAIN, ON_MAIN)) and f0[INPUT].startswith("│ " + PROMPT), "input above the list, counter on its edge")
+check(f0[LIST_TOP - 1].startswith("├─") and f0[DIVIDER] == "├" + "─" * (COLS - 2) + "┤", "list and details share a section, split by a plain divider")
+check(all(l.startswith("│ ") and l.endswith(" │") for l in f0[DIVIDER + 1:BOTTOM]) and f0[BOTTOM].startswith("├─"), "details framed with padding")
 check(has(f0, "Merge:  ") and has(f0, "diff against the first parent") and has(f0, "── 1 file changed  +1 -0 ─") and has(f0, "── diff ─"), "a clean merge shows what it brought in")
-check(f0[HELP - 1].startswith("╭─") and f0[HELP].startswith("│ type filter") and "? help" in f0[HELP] and f0[HELP + 1].startswith("╰─"), "help in its own box: %r" % f0[HELP][:60])
+check(f0[HELP].startswith("│ type filter") and "? help" in f0[HELP] and f0[HELP + 1].startswith("╰─"), "help at the bottom of the frame: %r" % f0[HELP][:60])
+check([i for i, l in enumerate(f0) if l[0] in "╭╰"] == [0, ROWS - 1], "one frame: no section spends lines on borders of its own")
 check(b"\x1b[?1049h" in t.raw, "alt screen entered")
 
 t.send(DOWN); t.send(DOWN)
@@ -202,7 +204,7 @@ t.pump(0.6)
 f = t.frame()
 check(f[NEWEST + 2].startswith("│▌ " + C59), "marker two lines below the newest")
 check(has(f, "── 1 file changed  +16 -16 ─") and sum(l.count("│") for l in f) > 40, "titled file list and side-by-side panels")
-check(re.search(r" \d+/\d+ ─╯$", f[BOTTOM]) is not None, "scroll position on the main box's bottom edge: %r" % f[BOTTOM][-16:])
+check(re.search(r" \d+/\d+ ─┤$", f[BOTTOM]) is not None, "scroll position on the main section's bottom edge: %r" % f[BOTTOM][-16:])
 
 # wheel scrolls the preview, not the list, and never leaks into the filter
 before = t.frame()
@@ -210,7 +212,7 @@ t.send(b"\x1b[<65;70;30M" * 30, settle=0.6)
 after = t.frame()
 check(after[INPUT] == before[INPUT] and after[LIST_TOP:DIVIDER] == before[LIST_TOP:DIVIDER], "wheel: input clean, list unchanged")
 check(after[DIVIDER + 1:BOTTOM] != before[DIVIDER + 1:BOTTOM], "wheel: details scrolled")
-check(after[DIVIDER].startswith("├─ auto: side-by-side  " + C59 + " feat: change number 59 ─"), "scrolled: the commit shows on the divider: %r" % after[DIVIDER][:60])
+check(after[DIVIDER] == before[DIVIDER], "scrolled: the divider stays a plain line: %r" % after[DIVIDER][:60])
 
 t.send(b"\x1b[<0;20;%dM\x1b[<0;20;%dm" % (NEWEST + 2, NEWEST + 2))   # 1-based: the line below the newest
 check(t.frame()[NEWEST + 1].startswith("│▌ " + SIDE), "left click selects the row under the pointer")
@@ -252,19 +254,19 @@ t.send(CTRL_L, settle=0.8)
 f = t.frame(); dump("columns layout", f[:7])
 sel = selected(f)
 check(len(sel) == 1 and NEEDLE in sel[0], "cursor stays on the same commit across the layout change")
-check(f[INPUT].startswith("│ " + PROMPT) and counter(f, "%d/%d" % (ON_MAIN, ON_MAIN)), "columns: same input box, list top-down")
+check(f[INPUT].startswith("│ " + PROMPT) and counter(f, "%d/%d" % (ON_MAIN, ON_MAIN)), "columns: same input, list top-down")
 check(re.match(r"^│  [0-9a-f]+ +\d+(mo|[ymwdh]) (feat|fix): ", f[LIST_TOP]) is not None and "Ada" not in f[LIST_TOP].split("│")[1], "compact rows: hash, relative date, subject: %r" % f[LIST_TOP][:40])
 col = f[LIST_TOP - 1].index("┬")
-check(f[BOTTOM][col] == "┴" and all(l[col] == "│" for l in f[LIST_TOP:BOTTOM]) and "┬─ auto: single column ─" in f[LIST_TOP - 1],
-      "a vertical divider splits the main box, list | details (auto goes single column at this width)")
+check(f[BOTTOM][col] == "┴" and all(l[col] == "│" for l in f[LIST_TOP:BOTTOM]) and f[LIST_TOP - 1].replace("─", "") == "├┬┤",
+      "a vertical divider splits the main section, list | details, under a plain edge")
 check(pref("layout") == "columns", "layout persisted: %r" % pref("layout"))
 edge = col
 t.send(SHIFT_RIGHT, settle=0.8)
 check(t.frame()[LIST_TOP - 1].index("┬") > edge and pref("split-columns") == "70", "shift+right grows the list, persisted: %r" % pref("split-columns"))
 t.send(CTRL_T, settle=0.2)
-check(t.wait_for("─ side-by-side ─") and pref("diff") == "sbs", "ctrl+t: auto -> side-by-side")
+check(t.wait_for("│ diff: side-by-side ") and pref("diff") == "sbs", "ctrl+t: auto -> side-by-side, flashed in the help line")
 t.send(CTRL_T, settle=0.2)
-check(t.wait_for("─ single column ─") and pref("diff") == "single", "ctrl+t: side-by-side -> single column")
+check(t.wait_for("│ diff: single column ") and pref("diff") == "single", "ctrl+t: side-by-side -> single column")
 t.pump(0.8)
 
 t.resize(30, 110); t.pump(1.0)
@@ -316,7 +318,7 @@ check(t.wait_exit() == 0 and b"\x1b[?1049l" in t.raw, "esc exits with status 0 a
 
 # ---------- 5. next run: settings restored; log scopes ----------
 t = Term(REPO)
-check(t.wait_for("┬─ single column ─"), "next run starts in columns + single column")
+check(t.wait_for("┬") and pref("diff") == "single", "next run starts in columns + single column")
 t.send(CTRL_A, settle=1.0)
 f = t.frame()
 check(counter(f, "%d/%d [all refs]" % (ALL, ALL)) and has(f, "chore: never merged"), "ctrl+a lists all refs: %r" % f[COUNTER][-30:])
@@ -366,6 +368,33 @@ t = Term(SANDBOX, extra_env=pane, rows=10, cols=80)
 check(t.wait_for("not inside a git work tree"), "plugin pane outside a repo: error shown inside the TUI")
 t.send(b"x")
 check(t.wait_exit() == 1, "any key closes the error view with status 1")
+
+# ---------- 9. hunk as the diff renderer ----------
+if shutil.which("hunk"):
+    t = Term(REPO)
+    check(t.wait_for("side.txt"), "starts with delta's render")
+    t.send(b"\x12", settle=0.2)   # ctrl+r
+    check(t.wait_for("│ diffs by hunk ") and pref("renderer") == "hunk", "ctrl+r: hunk renders the diffs, flashed and persisted")
+    check(t.wait_for("+1 -0", 8.0), "hunk's file header (path and counts) shows in the details")
+    t.pump(0.5)
+    f = t.frame(); dump("rendered by hunk", f[DIVIDER:DIVIDER + 16])
+    check(all(len(l) == COLS and l.startswith("│") and l.endswith("│") for l in f[1:-1] if not l.startswith("├")), "hunk's screen stays inside the frame")
+    check(has(f, "── diff ─") and any(l.startswith("│ ▌") for l in f[DIVIDER + 1:BOTTOM]), "hunk's rows under the native header")
+    t.send(b"\x12", settle=0.5)
+    check(pref("renderer") == "delta", "ctrl+r again: back to delta")
+    t.send(ESC); t.wait_exit()
+    # The renders were kept for the next run.
+    stored = sum(len(fs) for _, _, fs in os.walk(os.path.join(CACHE, "asgitlog", "renders")))
+    check(stored > 0, "renders are kept on disk: %d files" % stored)
+    with open(os.path.join(STATE, "asgitlog", "renderer"), "w") as f: f.write("hunk")
+    t = Term(REPO)
+    check(t.wait_for("+1 -0  ", 3.0) and any(l.startswith("│ ▌") for l in t.frame()), "next run starts with hunk, its render at hand")
+    t.send(ESC); t.wait_exit()
+    with open(os.path.join(STATE, "asgitlog", "renderer"), "w") as f: f.write("delta")
+    left = subprocess.run(["pgrep", "-f", "hunk patch .*asgitlog-"], capture_output=True, text=True).stdout.split()
+    check(not left, "no hunk process outlives its render: %r" % left)
+else:
+    print("  (hunk not installed: renderer step skipped)")
 
 shutil.rmtree(SANDBOX, ignore_errors=True)
 print("\n%s (%d failed)" % ("FAILED" if failures else "ALL OK", len(failures)))

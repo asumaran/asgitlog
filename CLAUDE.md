@@ -38,8 +38,10 @@ are split by concern but everything stays in `package main`:
   match highlighting.
 - `preview.go`: native header with the file list, `git show | delta` as a
   `tea.Cmd`, file header detection, output cap.
+- `hunk.go`: hunk as the alternative diff renderer, captured off a pty.
 - `prefs.go`: persisted layout, diff mode and split sizes.
-- `ui.go`: the bubbletea model/Update/View, modes, geometry, single-flight
+- `cache.go`: the rendered diffs kept on disk between runs.
+- `ui.go`: the bubbletea model/Update/View, modes, geometry, pooled
   preview rendering with prefetch, full view and its search, actions, mouse,
   styles.
 - `scripts/pty-check.py`: end-to-end driver (see Testing).
@@ -88,14 +90,17 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   once per session like any commit.
 - **Layout is computed at render time** from structs, so a resize or a layout
   change never re-runs git and the cursor trivially stays on the same commit.
-  Only the visible window of rows is rendered. The screen is FOUR BOXES
-  stacked (`listView`, built with `box`/`hline`/`fit`, all lines exactly the
-  terminal width): the repo summary; the filter input, whose top edge carries
-  `matches/total [scope]` and the loading mark; the main box, holding the list
-  AND the commit details split by a divider (`mainBox`); and the help, which
-  grows when `?` expands it (the main box gives way). The edge over the
-  details (the divider in rows, the top edge in columns) carries the diff
-  mode, plus the commit once its header scrolled away; the main box's bottom
+  Only the visible window of rows is rendered. The screen is ONE FRAME of
+  four sections (`listView`, built with `hline`/`framed`/`fit`, all lines
+  exactly the terminal width) that share their edges (`├─┤`), so no line goes
+  to a border of their own (four separate boxes were tried first; the doubled
+  borders read as gaps and cost three lines): the repo summary; the filter
+  input, whose top edge carries `matches/total [scope]` and the loading mark;
+  the main section, holding the list AND the commit details split by a divider
+  (`mainLines`); and the help, which grows when `?` expands it (the main
+  section gives way). The edge over the details (the divider in rows, the top
+  edge in columns) is a plain line: it used to carry the diff mode and the
+  scrolled-away commit, which was dropped as noise. The main section's bottom
   edge carries `line/total`. Details have a cell of padding, list rows use
   their own 2-cell gutter.
   - The list reads TOP-DOWN in both layouts: row 0, the newest commit, is the
@@ -126,14 +131,41 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   `git show -m --first-parent --format= <hash> | delta --width=N
   --paging=never [--side-by-side]`, ANSI output straight into a `viewport`.
   delta ignores `COLUMNS` and assumes 80 columns when stdout is not a tty, so
-  `--width` is always explicit (the viewport width: the box costs 4 columns).
+  `--width` is always explicit (the viewport width: the frame costs 4 columns).
   `-m --first-parent` makes a merge show what it brought in; git show's
   combined diff is empty for a clean merge. Diff mode: `auto` (side by side
   from 120 columns of preview, the dotfiles' `delta-pager` threshold), `sbs`,
-  `single`; `ctrl+t` cycles. The cache key uses the EFFECTIVE mode, so auto
-  shares renders with the explicit modes. Without delta in `PATH` the diff
-  falls back to `git show --color=always` and the box label says so. Output
-  is capped at 16 MiB.
+  `single`; `ctrl+t` cycles and flashes the new mode in the help line (the
+  list has no standing label for it; the full view's title does). The cache
+  key uses the EFFECTIVE mode, so auto shares renders with the explicit modes.
+  Without delta in `PATH` the diff falls back to `git show --color=always`
+  (the `ctrl+t` flash says so). Output is capped at 16 MiB.
+- **hunk as an alternative renderer** (`ctrl+r`, setting `renderer`, only
+  when `hunk` is in `PATH`; a saved `hunk` without the binary falls back to
+  delta). Only its looks are wanted. hunk has NO static output (`hunk pager`
+  passes the patch through when stdout is not a tty, `hunk patch` starts its
+  TUI regardless), so `renderHunk` runs `hunk patch <tmpfile> --pager
+  --no-sidebar --no-extensions --cursor-line off --no-wrap --mode split|unified`
+  on a pty as wide as the viewport and TALL enough for the whole patch
+  (`hunkRows`: a row per patch line plus file chrome, capped at 4000 rows,
+  since the emulated screen is rows x width cells and costs ~170 MiB at the
+  cap; long lines are CUT: `--wrap` was tried and dropped, it breaks lines
+  mid-word), feeds the output to `charmbracelet/x/vt`, and takes
+  `Render()`'s lines minus the blank tail. The emulator's answers to hunk's
+  terminal queries are copied back to the pty (its reply pipe blocks
+  otherwise). hunk paints the diff at once (~0.2 s) and repaints as syntax
+  highlighting comes in (3-5x longer), with no end mark: the render is done
+  after 300 ms without output, then hunk is killed. Waiting that out made
+  every commit feel slow, so renders are PROGRESSIVE: the first frame (a
+  closed synchronized-output frame, or a 40 ms pause) is reported as a
+  `partial` render whose `previewMsg.next` waits for the final one. A partial
+  render is shown but stays the one in flight (no prefetch meanwhile); the
+  final one replaces it in place (same text, only colors change, so the scroll
+  offset holds). A cancelled pipeline drops its partial render, or it would
+  never be refined; one that fails after its first frame keeps it.
+  `HUNK_MCP_DISABLE=1` is required or every render leaves a `hunk daemon
+  serve` behind. The tool's name is part of the render cache key. File jumps
+  match hunk's header (` path … +A -D` under a rule or a blank line).
 - **Preview header is native** (lipgloss): `commit <hash> (refs)`, `Merge:`
   for merges, Author, Date (`dd/mm/yyyy HH:MM`), bold subject, indented
   body. The preview reads as titled blocks (`sectionRule`): after the message
@@ -151,14 +183,34 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   delta's file headers in the rendered text (a non-blank line under a blank
   one and over a rule of `─`) or plain git's `diff --git`. It depends on
   delta's default file decoration.
-- **Single-flight renders with prefetch**: previews render as a `tea.Cmd`,
-  cached per (commit, width, effective mode). At most one git|delta pipeline
-  runs; moving on cancels it (context) and the wanted render starts when the
-  cancelled one reports back, so holding an arrow key never piles up
-  processes. Once the selection is served, cursor+1 and cursor-1 are
-  rendered ahead. Failed renders are remembered (`failed`) and shown, not
-  retried, or the prefetch would loop. Nothing renders before the first
-  `WindowSizeMsg`.
+- **Bounded render pool with prefetch**: previews render as a `tea.Cmd`,
+  cached in memory per (commit, width, tool, effective mode). At most
+  `maxPipelines` (3) pipelines are in flight (`m.inflight`), DYING ones
+  included: a cancelled render holds its slot until it reports back, so
+  holding an arrow key never piles up processes. Every `updatePreview`
+  cancels the renders outside the window (`cancelStale`); the wanted render
+  starts on a free slot, waits for a dying one to free it, or, with every slot
+  live and in the window, takes the least wanted one's. Once the selection is
+  served (a partial render counts), the window is rendered ahead in the free
+  slots, in parallel: the row ahead, the row behind, then up to
+  `prefetchAhead` (4) rows in the direction of travel (`m.dir`). It used to be
+  strictly one render at a time with cursor±1 ahead; with hunk's ~0.6 s per
+  commit that never kept up with someone stepping through the log. Failed
+  renders are remembered (`failed`) and shown, not retried, or the prefetch
+  would loop. Nothing renders before the first `WindowSizeMsg`.
+- **Disk cache of the rendered diffs** (`cache.go`, `renderCache`): a commit
+  never changes, so the diff a tool drew is stored gzipped under
+  `${XDG_CACHE_HOME:-~/.cache}/asgitlog/renders/`, keyed by a hash of (format
+  version, tool fingerprint, commit, width, effective mode, paths). Only the
+  DIFF is stored: the header carries refs, which move. The fingerprint is
+  taken once per run: the tool's binary (path, size, mtime) plus, for delta,
+  `git config --list` and `DELTA_FEATURES`/`BAT_THEME`, and for hunk its
+  `config.toml` (user and repo) and `state.json`. The working tree row and
+  plain git output are never stored. A hit is touched; at startup the cache is
+  pruned to 3/4 of 128 MiB, least recently used first. A warm popup shows a
+  hunk render in ~40 ms instead of 0.2-2 s. `renderCache` is nil in tests (no
+  cache); `ASGITLOG_NO_CACHE=1` turns it off; `pty-check.py` sandboxes
+  `XDG_CACHE_HOME`.
 - **Full view** (enter): same cached content on a full-screen viewport with
   pager keys, `[`/`]` (or `←`/`→`) to the newer/older commit without leaving,
   file jumps, `ctrl+t`, `y`/`o`, and `/` search (`n`/`N`, `esc` clears it
@@ -180,8 +232,8 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   toggles while the query is empty; `f1` always works. A hand-made overlay
   with section titles and notes was tried and dropped; the filter's `~word`
   hint lives on as a help-only binding.
-- **Settings** (`layout`, `diff`, `split-rows`, `split-columns`) are one
-  plain-text file each under `${XDG_STATE_HOME:-~/.local/state}/asgitlog/`,
+- **Settings** (`layout`, `diff`, `renderer`, `split-rows`, `split-columns`)
+  are one plain-text file each under `${XDG_STATE_HOME:-~/.local/state}/asgitlog/`,
   not the herdr plugin state dir: the popup and the shell binary share them.
 - **Plugin pane cwd**: herdr starts plugin panes in the plugin root and
   resolves the manifest's `./asgitlog` against the pane's cwd, so the pane
@@ -222,7 +274,8 @@ filtering (substring, fuzzy, AND, non-ASCII, narrowing, byte offsets), row
 layout (exact widths, column alignment, narrow fallback, special rows,
 relative dates), settings, the header variants, file header detection, and
 the model (geometry, both list directions, toggles and persistence, list
-resizing, filter flow, single-flight + prefetch, render errors, box edges and
+resizing, filter flow, render pool + prefetch + partial renders, the disk
+cache, render errors, box edges and
 file jumps, full view navigation + search + help, copy/browse through stubs,
 scope input, error states). Integration tests build a throwaway repository
 with a merge and run the real `git log`/`git show`/`delta` paths, log scopes

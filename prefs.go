@@ -19,6 +19,8 @@ const (
 	diffAuto      = "auto"    // side by side when the preview is wide enough
 	diffSBS       = "sbs"
 	diffSingle    = "single"
+	toolDelta     = "delta" // what renders the diff; plain git without delta
+	toolHunk      = "hunk"
 
 	// autoSBSMinW is the preview width from which the auto mode goes side by
 	// side (the threshold the dotfiles' delta-pager wrapper uses).
@@ -30,6 +32,7 @@ const (
 type prefs struct {
 	layout       string
 	diff         string
+	tool         string
 	splitRows    int // preview height, percent of the body
 	splitColumns int // preview width, percent of the screen
 }
@@ -75,6 +78,7 @@ func loadPrefs() prefs {
 	p := prefs{
 		layout:       layoutRows,
 		diff:         diffAuto,
+		tool:         toolDelta,
 		splitRows:    readSplit("split-rows", 70),
 		splitColumns: readSplit("split-columns", 75), // list 25%, details 75%
 	}
@@ -83,6 +87,9 @@ func loadPrefs() prefs {
 	}
 	if d := readPref("diff"); d == diffSBS || d == diffSingle {
 		p.diff = d
+	}
+	if readPref("renderer") == toolHunk {
+		p.tool = toolHunk
 	}
 	return p
 }

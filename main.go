@@ -55,6 +55,8 @@ func main() {
 	enterPaneCwd()
 	deltaBin, _ := exec.LookPath("delta")
 	m := newModel(loadPrefs(), deltaBin, opts)
+	m.hunkBin, _ = exec.LookPath("hunk")
+	renderCache = openDiskCache()
 
 	if !insideWorkTree() {
 		cwd, _ := os.Getwd()
@@ -72,6 +74,7 @@ func main() {
 		os.Exit(runDump(m, *query, *show, *limit, *width))
 	}
 
+	go renderCache.prune(cacheMaxBytes)
 	// The log stream starts in Init. Alt screen and mouse mode are declared per frame by View().
 	if _, err := tea.NewProgram(m).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -126,6 +129,13 @@ func runDump(m *model, query, show string, limit, width int) int {
 		delta = "not found (plain git colors)"
 	}
 	fmt.Println("delta: ", delta)
+	if m.hunkBin != "" {
+		fmt.Println("hunk:  ", m.hunkBin)
+	}
+	fmt.Println("diffs:  by", m.tool().name)
+	if renderCache != nil {
+		fmt.Println("cache: ", homeRel(renderCache.dir))
+	}
 
 	for b := range streamLog(context.Background(), m.opts, m.logGen) {
 		m.addCommits(b.commits)
@@ -146,7 +156,10 @@ func runDump(m *model, query, show string, limit, width int) int {
 				continue
 			}
 			mode := effectiveDiff(m.prefs.diff, width)
-			msg := renderPreviewCmd(context.Background(), m.commits[i], width, mode, m.deltaBin, m.opts.paths)().(previewMsg)
+			msg := renderPreviewCmd(context.Background(), m.commits[i], width, mode, m.tool(), m.opts.paths)().(previewMsg)
+			for msg.next != nil { // a partial render: wait for the final one
+				msg = msg.next().(previewMsg)
+			}
 			if msg.err != nil {
 				fmt.Fprintln(os.Stderr, "asgitlog:", msg.err)
 				return 1

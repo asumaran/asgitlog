@@ -396,14 +396,15 @@ func TestRenderSegsHighlightsMatchedBytes(t *testing.T) {
 
 func TestPrefsRoundTrip(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	if p := loadPrefs(); p != (prefs{layout: layoutRows, diff: diffAuto, splitRows: 70, splitColumns: 75}) {
+	if p := loadPrefs(); p != (prefs{layout: layoutRows, diff: diffAuto, tool: toolDelta, splitRows: 70, splitColumns: 75}) {
 		t.Errorf("defaults = %+v", p)
 	}
 	savePref("layout", layoutColumns)
 	savePref("diff", diffSingle)
 	savePref("split-rows", "55")
 	savePref("split-columns", "80")
-	if p := loadPrefs(); p != (prefs{layout: layoutColumns, diff: diffSingle, splitRows: 55, splitColumns: 80}) {
+	savePref("renderer", toolHunk)
+	if p := loadPrefs(); p != (prefs{layout: layoutColumns, diff: diffSingle, tool: toolHunk, splitRows: 55, splitColumns: 80}) {
 		t.Errorf("after save = %+v", p)
 	}
 	if got := filepath.Base(prefsDir()); got != "asgitlog" {
@@ -650,7 +651,7 @@ func TestStreamLogAndDetail(t *testing.T) {
 	if d, _ := loadDetail(ctx, &cs[0], nil); len(d.files) != 1 || d.files[0].path != "side.txt" {
 		t.Errorf("merge detail = %+v", d)
 	}
-	if diff, err := renderDiff(ctx, &cs[0], 80, false, "", nil); err != nil || !strings.Contains(ansi.Strip(diff), "+side") {
+	if diff, err := renderDiff(ctx, &cs[0], 80, false, diffTool{}, nil, nil); err != nil || !strings.Contains(ansi.Strip(diff), "+side") {
 		t.Errorf("merge diff = %q, %v", ansi.Strip(diff), err)
 	}
 
@@ -697,7 +698,7 @@ func TestWorkTreeRow(t *testing.T) {
 	if err != nil || len(d.files) != 1 || d.added != 1 || !reflect.DeepEqual(d.untracked, []string{"untracked.txt"}) {
 		t.Errorf("working tree detail = %+v, %v", d, err)
 	}
-	if diff, err := renderDiff(context.Background(), &cs[0], 80, false, "", nil); err != nil || !strings.Contains(ansi.Strip(diff), "+four") {
+	if diff, err := renderDiff(context.Background(), &cs[0], 80, false, diffTool{}, nil, nil); err != nil || !strings.Contains(ansi.Strip(diff), "+four") {
 		t.Errorf("working tree diff = %q, %v", ansi.Strip(diff), err)
 	}
 	if cs := collectLog(t, logOpts{pickaxe: "three"}); cs[0].wt {
@@ -723,7 +724,7 @@ func TestStreamLogReportsEmptyRepo(t *testing.T) {
 func TestRenderDiffFallsBackWithoutDelta(t *testing.T) {
 	gitRepo(t)
 	cs := collectLog(t, logOpts{})
-	out, err := renderDiff(context.Background(), bySubject(t, cs, "second commit"), 80, true, "", nil)
+	out, err := renderDiff(context.Background(), bySubject(t, cs, "second commit"), 80, true, diffTool{}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -733,7 +734,7 @@ func TestRenderDiffFallsBackWithoutDelta(t *testing.T) {
 	if len(fileLines(out)) != 2 {
 		t.Errorf("fileLines on plain git output = %v", fileLines(out))
 	}
-	if empty, err := renderDiff(context.Background(), bySubject(t, cs, "empty one"), 80, true, "", nil); err != nil || empty != "" {
+	if empty, err := renderDiff(context.Background(), bySubject(t, cs, "empty one"), 80, true, diffTool{}, nil, nil); err != nil || empty != "" {
 		t.Errorf("empty commit diff = %q, %v", empty, err)
 	}
 }
@@ -746,7 +747,7 @@ func TestRenderDiffWithDelta(t *testing.T) {
 	gitRepo(t)
 	second := bySubject(t, collectLog(t, logOpts{}), "second commit")
 	for _, sbs := range []bool{true, false} {
-		out, err := renderDiff(context.Background(), second, 90, sbs, deltaBin, nil)
+		out, err := renderDiff(context.Background(), second, 90, sbs, diffTool{toolDelta, deltaBin}, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

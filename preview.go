@@ -12,6 +12,7 @@ import (
 	"context"
 	"io"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -30,9 +31,12 @@ const (
 
 // render is one cached preview: the content and the lines where each file's
 // diff starts (for jumping between files).
+// A render is partial while its tool is still refining it (hunk's syntax
+// highlighting): it is shown, and replaced when the final one arrives.
 type render struct {
 	content string
 	files   []int
+	partial bool
 }
 
 type previewMsg struct {
@@ -44,45 +48,77 @@ type previewMsg struct {
 	// cancelled marks a render whose context was cancelled because the
 	// selection moved on; its error is not worth showing.
 	cancelled bool
+	// next waits for what follows a partial render: the final one, or how it
+	// ended. The pipeline is still running until that reports back.
+	next tea.Cmd
 }
+
+// renderCache keeps the rendered diffs between runs; nil (tests) keeps none.
+var renderCache *diskCache
+
+// diffTool is what renders the diff: delta or hunk, or plain git when bin is
+// empty.
+type diffTool struct{ name, bin string }
 
 // previewKey identifies a render. mode is the effective diff mode (auto is
 // resolved by the caller), so auto and an explicit mode share their renders.
-func previewKey(hash string, width int, mode string) string {
-	return hash + "|" + strconv.Itoa(width) + "|" + mode
+func previewKey(hash string, width int, tool diffTool, mode string) string {
+	return hash + "|" + strconv.Itoa(width) + "|" + tool.name + "|" + mode
 }
 
 // renderPreviewCmd renders header + diff for c at width. ctx cancels the git
 // and delta processes when the selection moves on before they finish.
-func renderPreviewCmd(ctx context.Context, c commit, width int, mode, deltaBin string, paths []string) tea.Cmd {
-	key := previewKey(c.hash, width, mode)
-	return func() tea.Msg {
-		fail := func(err error) tea.Msg {
+func renderPreviewCmd(ctx context.Context, c commit, width int, mode string, tool diffTool, paths []string) tea.Cmd {
+	key := previewKey(c.hash, width, tool, mode)
+	// At most a partial and a final message: the pipeline never blocks on a
+	// program that went away.
+	msgs := make(chan previewMsg, 2)
+	next := func() tea.Msg { return <-msgs }
+	run := func() previewMsg {
+		fail := func(err error) previewMsg {
 			return previewMsg{key: key, hash: c.hash, err: err, cancelled: ctx.Err() != nil}
 		}
 		d, err := loadDetail(ctx, &c, paths)
 		if err != nil {
 			return fail(err)
 		}
-		diff, err := renderDiff(ctx, &c, width, mode == diffSBS, deltaBin, paths)
+		rendered := func(diff string, partial bool) previewMsg {
+			content := previewHeader(&c, &d, width)
+			if diff != "" { // an empty commit already says "no changes"
+				content += "\n\n" + sectionRule(stLabel.Render("diff"), width) + "\n\n" + diff
+			}
+			return previewMsg{key: key, hash: c.hash, detail: d, render: render{content, fileLines(content), partial}}
+		}
+		if diff, ok := renderCache.get(tool, c.hash, width, mode, paths); ok {
+			return rendered(diff, false)
+		}
+		diff, err := renderDiff(ctx, &c, width, mode == diffSBS, tool, paths, func(diff string) {
+			msg := rendered(diff, true)
+			msg.next = next
+			msgs <- msg
+		})
 		if err == nil {
 			err = ctx.Err()
 		}
 		if err != nil {
 			return fail(err)
 		}
-		content := previewHeader(&c, &d, width)
-		if diff != "" { // an empty commit already says "no changes"
-			content += "\n\n" + sectionRule(stLabel.Render("diff"), width) + "\n\n" + diff
+		if tool.bin != "" { // plain git is as fast as reading it back
+			renderCache.put(tool, c.hash, width, mode, paths, diff)
 		}
-		return previewMsg{key: key, hash: c.hash, detail: d, render: render{content, fileLines(content)}}
+		return rendered(diff, false)
+	}
+	return func() tea.Msg {
+		go func() { msgs <- run() }()
+		return next()
 	}
 }
 
 // renderDiff pipes the commit's patch through delta. delta ignores COLUMNS
 // and falls back to 80 columns when stdout is not a tty, so the width is
 // always explicit. Without delta the patch falls back to git's own colors.
-func renderDiff(ctx context.Context, c *commit, width int, sbs bool, deltaBin string, paths []string) (string, error) {
+func renderDiff(ctx context.Context, c *commit, width int, sbs bool, tool diffTool, paths []string, early func(string)) (string, error) {
+	deltaBin := tool.bin
 	color := "--no-color"
 	if deltaBin == "" {
 		color = "--color=always"
@@ -94,6 +130,13 @@ func renderDiff(ctx context.Context, c *commit, width int, sbs bool, deltaBin st
 		args = append(append([]string{}, showArgs...), color, "--format=", c.hash)
 	}
 	git := exec.CommandContext(ctx, "git", append(args, pathArgs(paths)...)...)
+	if tool.name == toolHunk {
+		patch, err := limitedOutput(git)
+		if err != nil {
+			return "", err
+		}
+		return renderHunk(ctx, tool.bin, []byte(patch), width, sbs, early)
+	}
 	if deltaBin == "" {
 		out, err := limitedOutput(git)
 		return strings.ReplaceAll(out, "\t", "    "), err
@@ -155,14 +198,24 @@ type renderError struct{ msg string }
 
 func (e *renderError) Error() string { return e.msg }
 
+// hunkFileLine is hunk's file header: the path and the counts at the ends of
+// an otherwise blank line.
+var hunkFileLine = regexp.MustCompile(`^ \S.*\s\+\d+ -\d+\s*$`)
+
 // fileLines finds where each file's diff starts in a rendered preview: delta
-// prints the path over a rule of "─", plain git a "diff --git" line.
+// prints the path over a rule of "─", hunk under one (or a blank line, for the
+// first file) with its counts, plain git a "diff --git" line.
 func fileLines(content string) []int {
 	lines := strings.Split(content, "\n")
 	var out []int
 	for i, l := range lines {
-		plain := strings.TrimSpace(ansi.Strip(l))
+		raw := ansi.Strip(l)
+		plain := strings.TrimSpace(raw)
 		if strings.HasPrefix(plain, "diff --git ") {
+			out = append(out, i)
+			continue
+		}
+		if hunkFileLine.MatchString(raw) && (i == 0 || strings.Trim(ansi.Strip(lines[i-1]), " ─") == "") {
 			out = append(out, i)
 			continue
 		}

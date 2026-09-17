@@ -74,6 +74,7 @@ down the history.
 | mouse wheel over the list | move the selection |
 | left click | select a commit |
 | `ctrl+t` | diff mode: auto, side-by-side, single column |
+| `ctrl+r` | render the diffs with delta or with [hunk](https://hunk.dev) (when installed) |
 | `ctrl+l` | preview below (rows) / on the side (columns) |
 | `shift+←`/`shift+→` | shrink / grow the list |
 | `ctrl+a` | all refs / current branch |
@@ -92,7 +93,7 @@ In the full-screen diff:
 | `]`/`[` or `→`/`←` | older / newer commit |
 | `tab`/`shift+tab` | next / previous file |
 | `/`, then `n`/`N` | search, next / previous match (`esc` clears) |
-| `ctrl+t`, `y`, `o`, `?` | diff mode, copy hash, open in browser, full key help |
+| `ctrl+t`, `ctrl+r`, `y`, `o`, `?` | diff mode, delta / hunk, copy hash, open in browser, full key help |
 | `q`, `esc` | back to the list |
 
 ## Behavior notes
@@ -105,13 +106,26 @@ In the full-screen diff:
   log is scoped to.
 - The selection survives layout changes, resizes and filter edits: deleting
   the query leaves you on the commit you found, with its neighbors around.
-- The commits next to the selected one are rendered ahead, so stepping
-  through the log does not wait for delta.
+- The commits around the selected one are rendered ahead (a few in the
+  direction you are moving, up to three at a time), so stepping through the
+  log does not wait for the renderer.
+- Rendered diffs are kept in `${XDG_CACHE_HOME:-~/.cache}/asgitlog/renders`
+  (up to 128 MiB, least recently used dropped first), so a commit you have
+  seen shows instantly the next time, also in a new session. They are keyed
+  by the renderer's binary and configuration, so an upgrade or a theme change
+  renders afresh. `ASGITLOG_NO_CACHE=1` turns it off.
 - The auto diff mode goes side by side when the preview is at least 120
   columns wide. delta gets an explicit `--width` and `--side-by-side` or not;
   everything else (theme, line numbers, ...) comes from your own delta
   configuration. Jumping between files relies on delta's default file
   header (the path over a rule).
+- `ctrl+r` hands the diffs to hunk instead, for its looks only: hunk is a
+  full-screen program with no plain output, so asgitlog runs it on an
+  off-screen terminal tall enough for the whole patch and shows what it drew.
+  The diff shows as soon as hunk has drawn it (about 0.2 s) and its syntax
+  highlighting fills in a moment later, the way it does in hunk itself. A
+  patch is cut at 4000 rows.
+  Theme and the rest come from your hunk configuration.
 - A merge is shown as the diff against its first parent, that is, what the
   merge brought into the branch.
 - The working tree row previews `git diff HEAD` and lists untracked files.

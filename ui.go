@@ -96,6 +96,7 @@ type listKeys struct {
 	Grow     key.Binding
 	All      key.Binding
 	Pickaxe  key.Binding
+	Tool     key.Binding
 	Copy     key.Binding
 	Browse   key.Binding
 	Help     key.Binding
@@ -113,7 +114,7 @@ func (k listKeys) FullHelp() [][]key.Binding {
 		{k.Filter, k.Fuzzy, k.Up, k.PageUp, k.ListTop},
 		{k.Newest, k.Open, k.NextFile, k.PrevFile, k.PrevUp},
 		{k.Shrink, k.Layout, k.DiffMode, k.All, k.Pickaxe},
-		{k.Copy, k.Browse, k.Help, k.Quit},
+		{k.Tool, k.Copy, k.Browse, k.Help, k.Quit},
 	}
 }
 
@@ -150,6 +151,7 @@ func defaultListKeys() listKeys {
 		Grow:     key.NewBinding(key.WithKeys("shift+right")),
 		All:      key.NewBinding(key.WithKeys("ctrl+a"), key.WithHelp("^a", "all refs / current branch")),
 		Pickaxe:  key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("^g", "search the diffs (git log -S)")),
+		Tool:     key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("^r", "diffs by delta / hunk")),
 		Copy:     key.NewBinding(key.WithKeys("ctrl+y"), key.WithHelp("^y", "copy the hash")),
 		Browse:   key.NewBinding(key.WithKeys("ctrl+o"), key.WithHelp("^o", "open the commit in the browser")),
 		Help:     key.NewBinding(key.WithKeys("f1"), key.WithHelp("?", "help")),
@@ -170,6 +172,7 @@ type fullKeys struct {
 	Next     key.Binding
 	Prev     key.Binding
 	DiffMode key.Binding
+	Tool     key.Binding
 	Copy     key.Binding
 	Browse   key.Binding
 	Help     key.Binding
@@ -185,7 +188,7 @@ func (k fullKeys) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Scroll, k.Page, k.Top, k.Older},
 		{k.NextFile, k.PrevFile, k.Search, k.Next},
-		{k.DiffMode, k.Copy, k.Browse},
+		{k.DiffMode, k.Tool, k.Copy, k.Browse},
 		{k.Help, k.Back},
 	}
 }
@@ -204,6 +207,7 @@ func defaultFullKeys() fullKeys {
 		Next:     key.NewBinding(key.WithKeys("n"), key.WithHelp("n/N", "next / previous match")),
 		Prev:     key.NewBinding(key.WithKeys("N")),
 		DiffMode: key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("^t", "diff mode")),
+		Tool:     key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("^r", "diffs by delta / hunk")),
 		Copy:     key.NewBinding(key.WithKeys("y", "ctrl+y"), key.WithHelp("y", "copy the hash")),
 		Browse:   key.NewBinding(key.WithKeys("o", "ctrl+o"), key.WithHelp("o", "open the commit in the browser")),
 		Help:     key.NewBinding(key.WithKeys("?", "f1"), key.WithHelp("?", "help")),
@@ -271,14 +275,15 @@ type model struct {
 	sized    bool // a WindowSizeMsg arrived; renders before that would use a made-up width
 
 	// preview
-	deltaBin     string
-	renders      map[string]render
-	failed       map[string]string // render errors, so they are shown once instead of retried
-	details      map[string]detail
-	wantKey      string // render the active viewport should show
-	shownKey     string // render whose final content it does show
-	inflight     string
-	cancelRender context.CancelFunc
+	deltaBin string
+	hunkBin  string
+	renders  map[string]render
+	failed   map[string]string // render errors, so they are shown once instead of retried
+	details  map[string]detail
+	wantKey  string // render the active viewport should show
+	shownKey string // render whose final content it does show
+	inflight map[string]*pipeline
+	dir      int // direction of the last move: the prefetch looks further that way
 
 	// full-view search
 	searchTerm string
@@ -302,6 +307,7 @@ func newModel(p prefs, deltaBin string, opts logOpts) *model {
 		width:    120,
 		height:   40,
 		deltaBin: deltaBin,
+		inflight: map[string]*pipeline{},
 		renders:  map[string]render{},
 		failed:   map[string]string{},
 		details:  map[string]detail{},
@@ -482,6 +488,9 @@ func (m *model) clampCursor() {
 }
 
 func (m *model) moveCursor(delta int) tea.Cmd {
+	if delta != 0 {
+		m.dir = delta / max(delta, -delta)
+	}
 	m.cursor += delta
 	m.clampCursor()
 	return m.updatePreview()
@@ -497,17 +506,17 @@ const minColumnsW = 60
 // rows on a narrow terminal, without touching the saved setting.
 func (m *model) columns() bool { return m.prefs.layout == layoutColumns && m.width >= minColumnsW }
 
-// The screen is four boxes: the repo summary, the filter input, the main box
-// (list and details, split by a divider) and the help.
+// The screen is one frame of four sections split by shared edges: the repo
+// summary, the filter input, the main section (list and details, split by a
+// divider) and the help.
 const (
-	infoBoxH  = 3
-	inputBoxH = 3
-	mainY     = infoBoxH + inputBoxH // first screen line of the main box
+	counterY = 2 // the edge over the filter input, which carries the counter
+	mainY    = 4 // the edge over the main section
 )
 
 // footH is the height of the help text: one line, or the full help bubbles
-// expands it into while `?` is on. The main box gives way. On a very short
-// terminal the help is cut rather than the main box squeezed out.
+// expands it into while `?` is on. The main section gives way. On a very short
+// terminal the help is cut rather than the main section squeezed out.
 func (m *model) footH() int {
 	if !m.help.ShowAll {
 		return 1
@@ -516,7 +525,7 @@ func (m *model) footH() int {
 	if m.inFull() {
 		h = lipgloss.Height(m.help.View(m.fullKeys))
 	}
-	return max(1, min(h, m.height-mainY-2-6))
+	return max(1, min(h, m.height-mainY-3-4))
 }
 
 func (m *model) toggleHelp() tea.Cmd {
@@ -525,14 +534,14 @@ func (m *model) toggleHelp() tea.Cmd {
 	return m.updatePreview()
 }
 
-// innerW is the width inside a box's borders.
+// innerW is the width inside the frame's sides.
 func (m *model) innerW() int { return max(20, m.width-2) }
 
-// mainH is the height inside the main box's borders.
-func (m *model) mainH() int { return max(4, m.height-mainY-(m.footH()+2)-2) }
+// mainH is the height between the main section's edges.
+func (m *model) mainH() int { return max(4, m.height-mainY-2-(m.footH()+1)) }
 
 // detailsH and detailsW are the area of the commit details inside the main
-// box, including the cell of padding on each side.
+// section, including the cell of padding on each side.
 func (m *model) detailsH() int {
 	if m.columns() {
 		return m.mainH()
@@ -561,8 +570,8 @@ func (m *model) listW() int {
 	return m.innerW()
 }
 
-// listY is the first screen line of the list, right under the main box's top
-// border.
+// listY is the first screen line of the list, right under the main section's
+// top edge.
 func (m *model) listY() int { return mainY + 1 }
 
 // overList reports whether a screen cell is inside the list.
@@ -594,13 +603,43 @@ func (m *model) activeVP() *viewport.Model {
 	return &m.prevVP
 }
 
+// A pipeline is a render in flight. A cancelled one is dying: it still counts
+// until it reports back.
+type pipeline struct {
+	cancel context.CancelFunc
+	dying  bool
+}
+
+const (
+	// maxPipelines bounds the renders running at once, dying ones included,
+	// so holding an arrow key never piles up processes: a selection that moved
+	// on cancels what it no longer needs and starts when that reports back.
+	maxPipelines = 3
+	// prefetchAhead is how many rows are rendered ahead in the direction of
+	// travel; the row behind the cursor is rendered too.
+	prefetchAhead = 4
+)
+
+// window is the rows worth having rendered besides the selected one, the most
+// useful first.
+func (m *model) window() []int {
+	d := m.dir
+	if d == 0 {
+		d = 1 // a fresh list is read downwards
+	}
+	rows := []int{m.cursor + d, m.cursor - d}
+	for i := 2; i <= prefetchAhead; i++ {
+		rows = append(rows, m.cursor+i*d)
+	}
+	return rows
+}
+
 // updatePreview points the active viewport at the selected commit: from the
 // render cache when possible, otherwise the instant header plus a placeholder
-// while delta runs. Only one render is in flight at a time; a selection that
-// moved on cancels it and the newest one starts when the cancelled render
-// reports back, so holding an arrow key never piles up delta processes. Once
-// the selection is served, the neighbors are rendered ahead so that moving to
-// them is instant.
+// while the diff renders. Renders the selection left behind are cancelled
+// unless they are still in the window around it. Once the selection is served
+// (a partial render counts), the window is rendered ahead, in parallel, so
+// that moving through it is instant.
 func (m *model) updatePreview() tea.Cmd {
 	if !m.sized || m.mode == modeFatal {
 		return nil
@@ -614,12 +653,13 @@ func (m *model) updatePreview() tea.Cmd {
 	}
 	w := vp.Width()
 	mode := effectiveDiff(m.prefs.diff, w)
-	k := previewKey(c.hash, w, mode)
+	k := previewKey(c.hash, w, m.tool(), mode)
 	if k != m.wantKey {
 		m.wantKey = k
 		m.clearSearch()
 		vp.GotoTop()
 	}
+	m.cancelStale(k, w, mode)
 	if r, ok := m.renders[k]; ok {
 		if m.shownKey != k {
 			m.shownKey = k
@@ -638,43 +678,87 @@ func (m *model) updatePreview() tea.Cmd {
 	}
 	m.shownKey = ""
 	vp.SetContent(previewHeader(c, d, w) + "\n\n" + stDim.Render("rendering…"))
-	return m.startRender(c, w, mode)
+	return m.startRender(c, w, mode, true)
 }
 
-func (m *model) startRender(c *commit, w int, mode string) tea.Cmd {
-	k := previewKey(c.hash, w, mode)
-	if m.inflight == k {
+// windowKeys are the render keys of the selection and its window, the most
+// wanted first.
+func (m *model) windowKeys(want string, w int, mode string) []string {
+	keys := []string{want}
+	for _, i := range m.window() {
+		if c, _ := m.rowAt(i); c != nil {
+			keys = append(keys, previewKey(c.hash, w, m.tool(), mode))
+		}
+	}
+	return keys
+}
+
+// cancelStale cancels the renders nobody is waiting for anymore.
+func (m *model) cancelStale(want string, w int, mode string) {
+	if len(m.inflight) == 0 {
+		return
+	}
+	keys := m.windowKeys(want, w, mode)
+	for k, p := range m.inflight {
+		if !p.dying && !slices.Contains(keys, k) {
+			p.cancel()
+			p.dying = true
+		}
+	}
+}
+
+// startRender starts a render unless it is in flight already (a dying one
+// starts again when it reports back: updatePreview runs on every report).
+// When every slot is taken the wanted render takes the least wanted one's,
+// once that has reported back; a prefetch just waits for a free slot.
+func (m *model) startRender(c *commit, w int, mode string, wanted bool) tea.Cmd {
+	k := previewKey(c.hash, w, m.tool(), mode)
+	if m.inflight[k] != nil {
 		return nil
 	}
-	if m.inflight != "" {
-		m.cancelRender() // its report triggers updatePreview again
+	if len(m.inflight) >= maxPipelines {
+		dying := false
+		for _, p := range m.inflight {
+			dying = dying || p.dying
+		}
+		if wanted && !dying { // a dying render frees its slot in a moment
+			keys := m.windowKeys(k, w, mode)
+			for i := len(keys) - 1; i > 0; i-- {
+				if p := m.inflight[keys[i]]; p != nil && !p.dying {
+					p.cancel()
+					p.dying = true
+					break
+				}
+			}
+		}
 		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m.inflight, m.cancelRender = k, cancel
-	return renderPreviewCmd(ctx, *c, w, mode, m.deltaBin, m.opts.paths)
+	m.inflight[k] = &pipeline{cancel: cancel}
+	return renderPreviewCmd(ctx, *c, w, mode, m.tool(), m.opts.paths)
 }
 
-// prefetch renders the rows next to the cursor while nothing else is pending.
+// prefetch renders the window around the cursor in the free slots.
 func (m *model) prefetch(w int, mode string) tea.Cmd {
-	if m.inflight != "" {
-		return nil
-	}
-	for _, i := range []int{m.cursor + 1, m.cursor - 1} {
+	var cmds []tea.Cmd
+	for _, i := range m.window() {
+		if len(m.inflight) >= maxPipelines {
+			break
+		}
 		c, _ := m.rowAt(i)
 		if c == nil {
 			continue
 		}
-		k := previewKey(c.hash, w, mode)
+		k := previewKey(c.hash, w, m.tool(), mode)
 		if _, ok := m.renders[k]; ok {
 			continue
 		}
 		if _, ok := m.failed[k]; ok {
 			continue
 		}
-		return m.startRender(c, w, mode)
+		cmds = append(cmds, m.startRender(c, w, mode, false))
 	}
-	return nil
+	return tea.Batch(cmds...)
 }
 
 // maxRenders bounds the render cache; it is simply dropped when full (the
@@ -682,14 +766,29 @@ func (m *model) prefetch(w int, mode string) tea.Cmd {
 const maxRenders = 128
 
 func (m *model) handlePreview(msg previewMsg) tea.Cmd {
-	if msg.key == m.inflight {
-		m.inflight = ""
-		m.cancelRender()
+	// A partial render is shown while its pipeline goes on: it stays in flight
+	// until what follows reports back.
+	if p := m.inflight[msg.key]; p != nil && msg.next == nil {
+		p.cancel()
+		delete(m.inflight, msg.key)
 	}
+	if msg.key == m.shownKey {
+		m.shownKey = "" // showing the partial render this one replaces
+	}
+	partial := m.renders[msg.key].partial
 	switch {
 	case msg.cancelled:
 		// updatePreview starts whatever is wanted now (possibly this same
-		// render again, after an A, B, A selection).
+		// render again, after an A, B, A selection). A partial render is not
+		// worth keeping: it would never get refined.
+		if partial {
+			delete(m.renders, msg.key)
+		}
+	case msg.err != nil && partial:
+		// hunk died on the way: what it had drawn is as good as it gets.
+		r := m.renders[msg.key]
+		r.partial = false
+		m.renders[msg.key] = r
 	case msg.err != nil:
 		m.failed[msg.key] = msg.err.Error()
 	default:
@@ -700,7 +799,7 @@ func (m *model) handlePreview(msg previewMsg) tea.Cmd {
 		m.renders[msg.key] = msg.render
 		m.details[msg.hash] = msg.detail
 	}
-	return m.updatePreview()
+	return tea.Batch(msg.next, m.updatePreview())
 }
 
 // resetPreview forces the active viewport to be filled again (mode switch:
@@ -824,7 +923,32 @@ func (m *model) toggleLayout() tea.Cmd {
 	return m.updatePreview()
 }
 
-// cycleDiffMode goes auto → side-by-side → single column.
+// tool is what renders the diffs: hunk when it was asked for and is installed,
+// else delta (or plain git, without delta).
+func (m *model) tool() diffTool {
+	if m.prefs.tool == toolHunk && m.hunkBin != "" {
+		return diffTool{toolHunk, m.hunkBin}
+	}
+	return diffTool{toolDelta, m.deltaBin}
+}
+
+// toggleTool switches between delta and hunk.
+func (m *model) toggleTool() tea.Cmd {
+	if m.hunkBin == "" {
+		return m.setFlash("hunk not found")
+	}
+	if m.prefs.tool == toolHunk {
+		m.prefs.tool = toolDelta
+	} else {
+		m.prefs.tool = toolHunk
+	}
+	savePref("renderer", m.prefs.tool)
+	return tea.Batch(m.updatePreview(), m.setFlash("diffs by "+m.prefs.tool))
+}
+
+// cycleDiffMode goes auto → side-by-side → single column. The list has no
+// standing label for the mode (the full view's title has one), so the change
+// is flashed there.
 func (m *model) cycleDiffMode() tea.Cmd {
 	switch m.prefs.diff {
 	case diffAuto:
@@ -835,7 +959,14 @@ func (m *model) cycleDiffMode() tea.Cmd {
 		m.prefs.diff = diffAuto
 	}
 	savePref("diff", m.prefs.diff)
-	return m.updatePreview()
+	if m.inFull() {
+		return m.updatePreview()
+	}
+	label := "diff: " + diffLabel(m.prefs.diff, m.prevVP.Width())
+	if m.deltaBin == "" {
+		label = "delta not found: plain git colors"
+	}
+	return tea.Batch(m.updatePreview(), m.setFlash(label))
 }
 
 // resizeList moves the divider between list and preview by one step.
@@ -1021,8 +1152,8 @@ func (m *model) quit() tea.Cmd {
 	if m.stopLog != nil {
 		m.stopLog()
 	}
-	if m.cancelRender != nil {
-		m.cancelRender()
+	for _, p := range m.inflight {
+		p.cancel()
 	}
 	return tea.Quit
 }
@@ -1069,6 +1200,8 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.toggleLayout()
 	case key.Matches(msg, m.keys.DiffMode):
 		return m, m.cycleDiffMode()
+	case key.Matches(msg, m.keys.Tool):
+		return m, m.toggleTool()
 	case key.Matches(msg, m.keys.Shrink):
 		return m, m.resizeList(false)
 	case key.Matches(msg, m.keys.Grow):
@@ -1136,6 +1269,8 @@ func (m *model) handleFullKey(msg tea.KeyPressMsg) tea.Cmd {
 		return m.toggleHelp()
 	case key.Matches(msg, m.fullKeys.DiffMode):
 		return m.cycleDiffMode()
+	case key.Matches(msg, m.fullKeys.Tool):
+		return m.toggleTool()
 	case key.Matches(msg, m.fullKeys.Older):
 		return m.moveCursor(+1)
 	case key.Matches(msg, m.fullKeys.Newer):
@@ -1275,32 +1410,33 @@ func fit(s string, w int) string {
 	return s + strings.Repeat(" ", max(0, w-ansi.StringWidth(s)))
 }
 
-// box frames lines (each with a cell of padding) in a rounded border w wide;
-// topRight goes into the top edge.
-func box(w int, topRight string, lines ...string) string {
+// framed sets a line, with a cell of padding, between the frame's sides.
+func framed(w int, l string) string {
 	side := stDim.Render("│")
-	out := []string{hline(w, "╭", "╮", "", topRight)}
-	for _, l := range lines {
-		out = append(out, side+fit(" "+l, w-2)+side)
-	}
-	return strings.Join(append(out, hline(w, "╰", "╯", "", "")), "\n")
+	return side + fit(" "+l, w-2) + side
 }
 
-// listView stacks the four boxes: repo summary, filter input (its top edge
-// carries the matches/total counter and the log's scope), the main box and
-// the help.
+// listView stacks the four sections in one frame: repo summary, filter input
+// (the edge over it carries the matches/total counter and the log's scope),
+// the main section and the help. Neighbours share an edge, so no line is spent
+// on a border of their own.
 func (m *model) listView() string {
 	w := m.width
 	input := m.ti.View()
 	if m.mode == modePickaxe {
 		input = m.pi.View()
 	}
-	return strings.Join([]string{
-		box(w, "", stInfo.Render(m.info)),
-		box(w, m.counter(), input),
-		m.mainBox(),
-		box(w, "", m.footLines(m.keys)...),
-	}, "\n")
+	out := []string{
+		hline(w, "╭", "╮", "", ""),
+		framed(w, stInfo.Render(m.info)),
+		hline(w, "├", "┤", "", m.counter()),
+		framed(w, input),
+	}
+	out = append(out, m.mainLines()...)
+	for _, l := range m.footLines(m.keys) {
+		out = append(out, framed(w, l))
+	}
+	return strings.Join(append(out, hline(w, "╰", "╯", "", "")), "\n")
 }
 
 // scope describes what the log is limited to, beyond the current branch.
@@ -1360,20 +1496,12 @@ func (m *model) listLines() []string {
 	return lines
 }
 
-// mainBox is the list and the commit details in one frame, split by a
-// divider: horizontal in the rows layout, vertical in the columns layout. The
-// edge over the details carries the diff mode, plus the commit once its
-// header has scrolled out of view; the bottom edge carries the scroll
-// position.
-func (m *model) mainBox() string {
+// mainLines is the list and the commit details between the edges shared with
+// the filter input and the help, split by a divider: horizontal in the rows
+// layout, vertical in the columns layout. The edge over the details is a plain
+// line; the bottom edge carries the scroll position.
+func (m *model) mainLines() []string {
 	w, side := m.width, stDim.Render("│")
-	label := stLabel.Render(diffLabel(m.prefs.diff, m.prevVP.Width()))
-	if m.deltaBin == "" {
-		label = stLabel.Render("delta not found: plain git colors")
-	}
-	if c := m.current(); c != nil && m.prevVP.YOffset() > 0 {
-		label += "  " + stTitle.Render(truncate(c.short()+" "+c.subject(), max(10, m.detailsW()/2)))
-	}
 	pos := ""
 	if total := m.prevVP.TotalLineCount(); total > m.prevVP.Height() {
 		pos = stDim.Render(strconv.Itoa(min(total, m.prevVP.YOffset()+m.prevVP.Height())) + "/" + strconv.Itoa(total))
@@ -1385,7 +1513,7 @@ func (m *model) mainBox() string {
 	var out []string
 	if m.columns() {
 		lw := m.listW()
-		out = append(out, stDim.Render("╭"+strings.Repeat("─", lw))+hline(dw+2, "┬", "╮", label, ""))
+		out = append(out, stDim.Render("├"+strings.Repeat("─", lw))+hline(dw+2, "┬", "┤", "", ""))
 		for i := range list {
 			d := ""
 			if i < len(details) {
@@ -1393,18 +1521,17 @@ func (m *model) mainBox() string {
 			}
 			out = append(out, side+list[i]+side+fit(" "+d, dw)+side)
 		}
-		out = append(out, stDim.Render("╰"+strings.Repeat("─", lw))+hline(dw+2, "┴", "╯", "", pos))
-		return strings.Join(out, "\n")
+		return append(out, stDim.Render("├"+strings.Repeat("─", lw))+hline(dw+2, "┴", "┤", "", pos))
 	}
-	out = append(out, hline(w, "╭", "╮", "", ""))
+	out = append(out, hline(w, "├", "┤", "", ""))
 	for _, l := range list {
 		out = append(out, side+l+side)
 	}
-	out = append(out, hline(w, "├", "┤", label, ""))
+	out = append(out, hline(w, "├", "┤", "", ""))
 	for _, d := range details {
 		out = append(out, side+fit(" "+d, dw)+side)
 	}
-	return strings.Join(append(out, hline(w, "╰", "╯", "", pos)), "\n")
+	return append(out, hline(w, "├", "┤", "", pos))
 }
 
 // footLines is the key help, or with a status message on its last line while
