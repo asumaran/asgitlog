@@ -34,6 +34,11 @@ are split by concern but everything stays in `package main`:
   (`logOpts`), the streamed `git log` (`streamLog`, `parseCommit`,
   decorations, the working tree row), per-commit `detail` (body + numstat).
 - `filter.go`: substring/fuzzy terms, hits in log order, narrowing.
+- `match.go`: `findTight`/`tighten`, the fuzzy matcher with one correction: it is
+  greedy (first candidate for each rune, left to right), so a query that
+  occurs in one piece could still match scattered letters before it. When the
+  query occurs whole, that occurrence is the match; here only the highlight changes, hits stay in log order. The same file in every
+  tool of the family.
 - `list.go`: row segments, the wide and compact formats, relative dates,
   match highlighting.
 - `preview.go`: native header with the file list, `git show | delta` as a

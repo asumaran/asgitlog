@@ -130,6 +130,7 @@ func filterCommits(commits []commit, among []int, from int, terms []qterm) []hit
 				idx[i] = h.idx
 			}
 			for _, mt := range fuzzy.FindFromNoSort(t.text, corpusSource{commits, idx}) {
+				tighten(t.text, &mt) // log order, so only the highlight changes
 				h := hits[mt.Index]
 				h.matched = append(h.matched, mt.MatchedIndexes...)
 				next = append(next, h)
