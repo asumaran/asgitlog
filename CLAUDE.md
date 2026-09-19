@@ -39,6 +39,10 @@ are split by concern but everything stays in `package main`:
   occurs in one piece could still match scattered letters before it. When the
   query occurs whole, that occurrence is the match; here only the highlight changes, hits stay in log order. The same file in every
   tool of the family.
+- `highlight.go`: `highlightFrom`, `matchOver`, `onSel` and the
+  `stSel`/`stMatch` styles, how a match and the selected row look;
+  `renderSegs` renders every segment through it. The same file in every tool
+  of the family, which took this look from here.
 - `list.go`: row segments, the wide and compact formats, relative dates,
   match highlighting.
 - `preview.go`: native header with the file list, `git show | delta` as a

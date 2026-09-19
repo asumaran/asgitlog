@@ -203,43 +203,18 @@ func rowSegs(c *commit, l rowLayout, selected bool) []seg {
 // the selected row gets its background on every segment so the bar spans the
 // whole list width without losing the column colors.
 func renderSegs(segs []seg, matched []int, selected bool) string {
-	var hl map[int]bool
-	if len(matched) > 0 {
-		hl = make(map[int]bool, len(matched))
-		for _, i := range matched {
-			hl[i] = true
-		}
-	}
+	hl := matchSet(matched)
 	var b strings.Builder
 	for _, s := range segs {
 		st := s.st
 		if selected {
-			st = st.Background(selBg).Bold(true)
+			st = onSel(st)
 		}
 		if hl == nil || s.off < 0 {
 			b.WriteString(st.Render(s.text))
 			continue
 		}
-		// Split the segment into highlighted and plain runs.
-		mst := st.Foreground(matchFg).Underline(true)
-		start, cur := 0, false
-		flush := func(end int) {
-			if end > start {
-				if cur {
-					b.WriteString(mst.Render(s.text[start:end]))
-				} else {
-					b.WriteString(st.Render(s.text[start:end]))
-				}
-			}
-			start = end
-		}
-		for i := range s.text { // i is a byte offset, like the matcher's
-			if on := hl[s.off+i]; on != cur {
-				flush(i)
-				cur = on
-			}
-		}
-		flush(len(s.text))
+		b.WriteString(highlightFrom(s.text, s.off, hl, st))
 	}
 	return b.String()
 }

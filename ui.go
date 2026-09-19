@@ -42,9 +42,6 @@ func truncate(s string, width int) string {
 // ---- styles ----
 
 var (
-	selBg   = lipgloss.Color("8")
-	matchFg = lipgloss.Color("13")
-
 	stPrompt = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Bold(true)
 	stDev    = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true)
 	stCursor = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
