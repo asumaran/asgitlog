@@ -19,5 +19,5 @@ id = "log"
 title = "Git log"
 placement = "popup"
 width = "85%"
-height = "80%"
+height = "90%"
 command = ["./asgitlog"]

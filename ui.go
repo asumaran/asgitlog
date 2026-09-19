@@ -155,7 +155,7 @@ func defaultListKeys() listKeys {
 		Copy:     key.NewBinding(key.WithKeys("ctrl+y"), key.WithHelp("^y", "copy the hash")),
 		Browse:   key.NewBinding(key.WithKeys("ctrl+o"), key.WithHelp("^o", "open the commit in the browser")),
 		Help:     key.NewBinding(key.WithKeys("f1"), key.WithHelp("?", "help")),
-		Quit:     key.NewBinding(key.WithKeys("esc", "ctrl+c"), key.WithHelp("esc", "quit")),
+		Quit:     key.NewBinding(key.WithKeys("esc", "ctrl+c"), key.WithHelp("esc/q", "quit")),
 	}
 }
 
@@ -1184,7 +1184,8 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.moveCursor(+m.rowCount())
 	case msg.String() == "esc" && m.help.ShowAll:
 		return m, m.toggleHelp() // esc folds the help before it quits
-	case key.Matches(msg, m.keys.Quit):
+	case key.Matches(msg, m.keys.Quit), msg.String() == "q" && m.ti.Value() == "":
+		// q quits only while the filter is empty; otherwise it is text, like ?.
 		return m, m.quit()
 	case key.Matches(msg, m.keys.Help), msg.String() == "?" && m.ti.Value() == "":
 		return m, m.toggleHelp()

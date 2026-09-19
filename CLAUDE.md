@@ -61,7 +61,7 @@ herdr plugin link ~/Developer/asgitlog   # link does NOT run [[build]]; go build
 ```
 
 Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
-`scripts/open-pane.sh` → `herdr plugin pane open` (popup, 85% x 80%).
+`scripts/open-pane.sh` → `herdr plugin pane open` (popup, 85% x 90%).
 
 ## Behaviour / decisions
 

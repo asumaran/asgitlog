@@ -82,7 +82,7 @@ down the history.
 | `ctrl+y` | copy the commit hash |
 | `ctrl+o` | open the commit on the remote's web page |
 | `?` (empty filter) or `f1` | expand / fold the full key help |
-| `esc`, `ctrl+c` | quit |
+| `esc`, `ctrl+c`, `q` with an empty filter | quit |
 
 In the full-screen diff:
 
@@ -135,7 +135,7 @@ In the full-screen diff:
   `diff`, `split-rows`, `split-columns`), shared by the popup and the shell
   command.
 - `ASGITLOG_POPUP_WIDTH` / `ASGITLOG_POPUP_HEIGHT` (e.g. `95%`) override the
-  popup size from the manifest (85% x 80%). `ASGITLOG_CLIPBOARD` and
+  popup size from the manifest (85% x 90%). `ASGITLOG_CLIPBOARD` and
   `ASGITLOG_OPENER` replace `pbcopy` and the browser opener.
 
 ## Development
