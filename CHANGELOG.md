@@ -1,3 +1,9 @@
+## v0.3.0 (2026-09-19)
+
+* feat(preview): ignore whitespace changes with ctrl+s (063a906)
+* test(hunk): share the hunk renderer's tests with gotochanged (1ebcf40)
+* docs(demo): add the demo GIF and its scenario (cded1d7)
+
 ## v0.2.0 (2026-09-18)
 
 * feat(ui): quit with q on an empty filter (95fc905)
