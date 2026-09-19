@@ -1,6 +1,6 @@
 # shellcheck shell=bash
-# scenario.sh — demo session for the README GIF, run by `herdr-demo record`
-# (asumaran/herdr-demokit). Sourced by the kit; the helpers used below
+# scenario.sh — demo session for the README GIF, run by `asdemo record`
+# (asumaran/asdemokit). Sourced by the kit; the helpers used below
 # (demo_*) come from it.
 
 DEMO_SESSION="asgitlogdemo"

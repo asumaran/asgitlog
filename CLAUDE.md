@@ -16,7 +16,7 @@ optionally scoped: `asgitlog [<revision range>...] [-- <path>...]`).
 Distributed as a herdr plugin (`herdr plugin install asumaran/asgitlog`; the
 manifest's `[[build]]` runs `scripts/fetch-binary.sh`). Each GitHub Release
 attaches `asgitlog-darwin-arm64`. There is no published library. Modeled on
-`gotopr` (siblings: `gotojira`, `herdr-goto`).
+`asgotopr` (siblings: `asgotoissues`, `asgoto`).
 
 ## Stack & layout
 
@@ -39,7 +39,7 @@ are split by concern but everything stays in `package main`:
 - `preview.go`: native header with the file list, `git show | delta` as a
   `tea.Cmd`, file header detection, output cap.
 - `hunk.go`: hunk as the alternative diff renderer, captured off a pty.
-  The same `hunk.go` and `hunk_test.go` ship in github.com/asumaran/gotochanged
+  The same `hunk.go` and `hunk_test.go` ship in github.com/asumaran/asgotochanged
   (copied, not imported: there is no shared library). A pull request only
   needs to change them here; the maintainer ports the change. Tests of what
   asgitlog does with the render live in `preview_test.go`.
@@ -234,7 +234,7 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
 - **Actions** are read-only: `ctrl+y` copies the full hash (`pbcopy`, or
   `ASGITLOG_CLIPBOARD`), `ctrl+o` opens the commit on the remote's web page
   (`webURL`/`commitURL`: GitHub, GitLab, Bitbucket shapes; Chrome front-window
-  AppleScript like gotopr, or `ASGITLOG_OPENER`) and stays open. Results show
+  AppleScript like asgotopr, or `ASGITLOG_OPENER`) and stays open. Results show
   as a 2-second flash in place of the help line.
 - **Help** is bubbles' `help` component and nothing else: the bottom line is
   its short view, and `?` toggles `help.ShowAll`, which expands it IN PLACE
@@ -273,7 +273,7 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   walks the history.
 - **Mouse**: the wheel is routed by pointer position: over the list
   (`overList`) it moves the selection one row per report; anywhere else it scrolls
-  the diff. gotopr dropped this routing because trackpad inertia drifting
+  the diff. asgotopr dropped this routing because trackpad inertia drifting
   across its two columns misrouted events; here the list needs a mouse way
   back up, and the stray event just moves the selection a row. A left click
   on a list row selects it and never opens it. Mouse mode and alt screen are

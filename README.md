@@ -156,7 +156,7 @@ herdr plugin link ~/Developer/asgitlog    # register the working copy (no build 
 ## Demo recording
 
 `docs/demo.gif` is recorded with
-[herdr-demokit](https://github.com/asumaran/herdr-demokit): `herdr-demo
+[asdemokit](https://github.com/asumaran/asdemokit): `asdemo
 record` from the repo root replays `scripts/demo/keys.json` against an
 isolated herdr session described by `scripts/demo/scenario.sh`, which starts
 on a personal repository so no work history shows up.

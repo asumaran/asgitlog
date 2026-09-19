@@ -140,9 +140,9 @@ func TestRepoInfoString(t *testing.T) {
 
 func TestWebAndCommitURL(t *testing.T) {
 	cases := map[string]string{
-		"git@github.com:asumaran/gotopr.git":         "https://github.com/asumaran/gotopr",
-		"https://github.com/asumaran/gotopr.git":     "https://github.com/asumaran/gotopr",
-		"https://user@github.com/asumaran/gotopr":    "https://github.com/asumaran/gotopr",
+		"git@github.com:asumaran/asgotopr.git":       "https://github.com/asumaran/asgotopr",
+		"https://github.com/asumaran/asgotopr.git":   "https://github.com/asumaran/asgotopr",
+		"https://user@github.com/asumaran/asgotopr":  "https://github.com/asumaran/asgotopr",
 		"ssh://git@gitlab.example.com:2222/g/s/repo": "https://gitlab.example.com/g/s/repo",
 		"/srv/git/repo.git":                          "",
 		"":                                           "",

@@ -1,11 +1,11 @@
 # Demo recording
 
 Scenario for re-recording the README demo GIF (`docs/demo.gif`) with
-[herdr-demokit](https://github.com/asumaran/herdr-demokit):
+[asdemokit](https://github.com/asumaran/asdemokit):
 
 ```bash
-herdr-demo record            # from the repo root; writes docs/demo.gif
-herdr-demo doctor            # check the toolchain first
+asdemo record            # from the repo root; writes docs/demo.gif
+asdemo doctor            # check the toolchain first
 ```
 
 - `scenario.sh` — the isolated herdr session (`asgitlogdemo`): it starts on
