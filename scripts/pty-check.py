@@ -7,7 +7,8 @@ SGR mouse reports and resizes, and asserts on frames rendered with pyte. The
 settings and the render cache go to a sandboxed XDG_STATE_HOME/XDG_CACHE_HOME
 and the clipboard/browser to logging stubs, so nothing real is touched.
 
-Usage: scripts/pty-check.py ./asgitlog   (needs python3 + pyte, git, delta)
+Usage: scripts/pty-check.py ./asgitlog   (needs python3 + pyte and git; delta and hunk are
+used when installed: without delta the diffs are plain git, as on a CI runner)
 """
 import fcntl, json, os, pty, re, select, shutil, signal, struct, subprocess, sys, tempfile, termios, time
 import pyte
@@ -154,6 +155,12 @@ class Term:
         return self.proc.poll()
 
 failures = []
+# Without delta the diffs are git's own: the mode change is flashed as a notice
+# and a file starts at its "diff --git" line instead of delta's header.
+DELTA = shutil.which("delta") is not None
+def flash(label): return ("│ diff: %s " % label) if DELTA else "│ delta not found"
+def filehead(name): return name if DELTA else "diff --git a/" + name
+
 def check(cond, msg):
     print(("  ok   " if cond else "  FAIL ") + msg)
     if not cond: failures.append(msg)
@@ -264,9 +271,9 @@ edge = col
 t.send(SHIFT_RIGHT, settle=0.8)
 check(t.frame()[LIST_TOP - 1].index("┬") > edge and pref("split-columns") == "70", "shift+right grows the list, persisted: %r" % pref("split-columns"))
 t.send(CTRL_T, settle=0.2)
-check(t.wait_for("│ diff: side-by-side ") and pref("diff") == "sbs", "ctrl+t: auto -> side-by-side, flashed in the help line")
+check(t.wait_for(flash("side-by-side")) and pref("diff") == "sbs", "ctrl+t: auto -> side-by-side, flashed in the help line")
 t.send(CTRL_T, settle=0.2)
-check(t.wait_for("│ diff: single column ") and pref("diff") == "single", "ctrl+t: side-by-side -> single column")
+check(t.wait_for(flash("single column")) and pref("diff") == "single", "ctrl+t: side-by-side -> single column")
 t.pump(0.8)
 
 t.resize(30, 110); t.pump(1.0)
@@ -286,10 +293,10 @@ t.send(b"j"); t.send(b"j"); t.send(b"j")
 check(t.frame()[2:7] != top, "j scrolls")
 t.send(b"G"); check(t.frame()[0].rstrip().endswith("100%"), "G jumps to the bottom")
 t.send(b"g"); check(t.frame()[2:7] == top, "g jumps back to the top")
-t.send(TAB); check(t.frame()[2].startswith("file.txt"), "tab jumps to the first file: %r" % t.frame()[2][:20])
+t.send(TAB); check(t.frame()[2].startswith(filehead("file.txt")), "tab jumps to the first file: %r" % t.frame()[2][:20])
 t.send(TAB)  # the last file is near the end, so it cannot reach the top line
-check(any(l.startswith("other.txt") for l in t.frame()) and t.frame()[0].rstrip().endswith("100%"), "tab again, the next file comes into view")
-t.send(b"\x1b[Z"); check(t.frame()[2].startswith("file.txt"), "shift+tab goes back")
+check(any(l.startswith(filehead("other.txt")) for l in t.frame()) and t.frame()[0].rstrip().endswith("100%"), "tab again, the next file comes into view")
+t.send(b"\x1b[Z"); check(t.frame()[2].startswith(filehead("file.txt")), "shift+tab goes back")
 t.send(b"g/"); t.send(b"line 70 of"); t.send(ENTER)
 f = t.frame()
 check(has(f[2:-1], "line 70 of revision") and "match 1/" in f[0], "search jumps to the first match: %r" % f[0][-40:])
