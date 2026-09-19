@@ -1,3 +1,7 @@
+## v0.2.0 (2026-09-18)
+
+* feat(ui): quit with q on an empty filter (95fc905)
+
 ## v0.1.0 (2026-09-18)
 
 * ci: run gofmt, vet and tests on push (5cce4a8)
