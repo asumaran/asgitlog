@@ -1,0 +1,22 @@
+[
+  ["wait", 3.0],
+  ["key", "ctrl+alt+l"],
+  ["wait", 3.2],
+  ["key", "down"],
+  ["wait", 1.4],
+  ["key", "down"],
+  ["wait", 1.6],
+  ["type", "cart"],
+  ["wait", 2.0],
+  ["key", "shift+down"],
+  ["wait", 0.5],
+  ["key", "shift+down"],
+  ["wait", 0.5],
+  ["key", "shift+down"],
+  ["wait", 1.8],
+  ["key", "enter"],
+  ["wait", 2.6],
+  ["key", "q"],
+  ["wait", 1.2],
+  ["key", "esc"]
+]

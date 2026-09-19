@@ -6,6 +6,8 @@ rendered by [delta](https://github.com/dandavison/delta). It runs as a
 [herdr](https://github.com/asumaran/herdr) plugin popup, on the repository of
 the pane you were in, and as a plain command in any shell.
 
+![asgitlog demo: popup over herdr with the commit list, the diff of the selected commit, a filter and the full diff view](docs/demo.gif)
+
 - The list shows hash, author, subject, refs and date. With the preview on
   the side it switches to hash, age and subject.
 - The preview has the commit header (hash, refs, author, date, files changed
@@ -149,6 +151,14 @@ go vet ./... && go test ./...
 scripts/pty-check.py ./asgitlog           # end-to-end on a pty (python3 + pyte)
 herdr plugin link ~/Developer/asgitlog    # register the working copy (no build step)
 ```
+
+## Demo recording
+
+`docs/demo.gif` is recorded with
+[herdr-demokit](https://github.com/asumaran/herdr-demokit): `herdr-demo
+record` from the repo root replays `scripts/demo/keys.json` against an
+isolated herdr session described by `scripts/demo/scenario.sh`, which starts
+on a personal repository so no work history shows up.
 
 ## Releasing
 
