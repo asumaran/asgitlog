@@ -39,6 +39,12 @@ are split by concern but everything stays in `package main`:
   occurs in one piece could still match scattered letters before it. When the
   query occurs whole, that occurrence is the match; here only the highlight changes, hits stay in log order. The same file in every
   tool of the family.
+- `helpfoot.go`: the help at the foot, the key that expands it, its height and
+  its lines cut to the width. The same file in every tool of the family,
+  which took the expandable help from here.
+- `listnav.go`: `listNav`, the keys that move the cursor through the list and
+  where each one takes it. The same file in every tool of the family, which
+  took these keys from here.
 - `highlight.go`: `highlightFrom`, `matchOver`, `onSel` and the
   `stSel`/`stMatch` styles, how a match and the selected row look;
   `renderSegs` renders every segment through it. The same file in every tool

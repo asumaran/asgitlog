@@ -76,14 +76,7 @@ var (
 type listKeys struct {
 	Filter   key.Binding
 	Fuzzy    key.Binding
-	Up       key.Binding
-	Down     key.Binding
-	PageUp   key.Binding
-	PageDown key.Binding
-	Newest   key.Binding
-	Oldest   key.Binding
-	ListTop  key.Binding
-	ListEnd  key.Binding
+	Nav      listNav
 	Open     key.Binding
 	NextFile key.Binding
 	PrevFile key.Binding
@@ -104,15 +97,15 @@ type listKeys struct {
 }
 
 func (k listKeys) ShortHelp() []key.Binding {
-	return []key.Binding{k.Filter, k.Up, k.ListTop, k.Open, k.DiffMode, k.Layout, k.Help, k.Quit}
+	return []key.Binding{k.Filter, k.Nav.Up, k.Nav.Top, k.Open, k.DiffMode, k.Layout, k.Help, k.Quit}
 }
 
 // FullHelp is what `?` expands the help line into: bubbles lays each group out
 // as a column.
 func (k listKeys) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Filter, k.Fuzzy, k.Up, k.PageUp, k.ListTop},
-		{k.Newest, k.Open, k.NextFile, k.PrevFile, k.PrevUp},
+		{k.Filter, k.Fuzzy, k.Nav.Up, k.Nav.PageUp, k.Nav.Top},
+		{k.Open, k.NextFile, k.PrevFile, k.PrevUp},
 		{k.Shrink, k.Layout, k.DiffMode, k.Tool, k.Space},
 		{k.All, k.Pickaxe, k.Copy, k.Browse, k.Help, k.Quit},
 	}
@@ -127,19 +120,7 @@ func defaultListKeys() listKeys {
 	return listKeys{
 		Filter:   key.NewBinding(key.WithKeys(helpOnly), key.WithHelp("type", "filter")),
 		Fuzzy:    key.NewBinding(key.WithKeys(helpOnly), key.WithHelp("~word", "fuzzy filter word")),
-		Up:       key.NewBinding(key.WithKeys("up", "ctrl+p"), key.WithHelp("↑/↓", "move")),
-		Down:     key.NewBinding(key.WithKeys("down", "ctrl+n")),
-		PageUp:   key.NewBinding(key.WithKeys("pgup"), key.WithHelp("pgup/pgdn", "move a page")),
-		PageDown: key.NewBinding(key.WithKeys("pgdown")),
-		// home/end would otherwise move the caret of the filter input, which
-		// left/right and ctrl+e already do; the list needs them more.
-		Newest: key.NewBinding(key.WithKeys("home", "ctrl+home"), key.WithHelp("home/end", "newest/oldest")),
-		Oldest: key.NewBinding(key.WithKeys("end", "ctrl+end")),
-		// Laptop keyboards have no home/end (fn+←/→ sends them, when the
-		// terminal lets it through), so the ends of the list are also on
-		// alt+arrows, by screen direction.
-		ListTop:  key.NewBinding(key.WithKeys("alt+up"), key.WithHelp("⌥↑/⌥↓", "top/bottom")),
-		ListEnd:  key.NewBinding(key.WithKeys("alt+down")),
+		Nav:      defaultListNav(),
 		Open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "full diff")),
 		NextFile: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next file")),
 		PrevFile: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab", "previous file")),
@@ -155,7 +136,7 @@ func defaultListKeys() listKeys {
 		Space:    key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("^s", "show / ignore whitespace")),
 		Copy:     key.NewBinding(key.WithKeys("ctrl+y"), key.WithHelp("^y", "copy the hash")),
 		Browse:   key.NewBinding(key.WithKeys("ctrl+o"), key.WithHelp("^o", "open the commit in the browser")),
-		Help:     key.NewBinding(key.WithKeys("f1"), key.WithHelp("?", "help")),
+		Help:     helpKey,
 		Quit:     key.NewBinding(key.WithKeys("esc", "ctrl+c"), key.WithHelp("esc/q", "quit")),
 	}
 }
@@ -521,14 +502,11 @@ const (
 // expands it into while `?` is on. The main section gives way. On a very short
 // terminal the help is cut rather than the main section squeezed out.
 func (m *model) footH() int {
-	if !m.help.ShowAll {
-		return 1
-	}
-	h := lipgloss.Height(m.help.View(m.keys))
+	var keys help.KeyMap = m.keys
 	if m.inFull() {
-		h = lipgloss.Height(m.help.View(m.fullKeys))
+		keys = m.fullKeys
 	}
-	return max(1, min(h, m.height-mainY-3-4))
+	return helpHeight(m.help, keys, m.height-mainY-3-4)
 }
 
 func (m *model) toggleHelp() tea.Cmd {
@@ -1206,22 +1184,15 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	// The list reads top-down in both layouts, newest commit first, right
 	// under the filter input: up the screen is up the log.
-	const up = -1
 	switch {
-	case key.Matches(msg, m.keys.Newest):
-		return m, m.moveCursor(-m.rowCount())
-	case key.Matches(msg, m.keys.ListTop):
-		return m, m.moveCursor(up * m.rowCount())
-	case key.Matches(msg, m.keys.ListEnd):
-		return m, m.moveCursor(-up * m.rowCount())
-	case key.Matches(msg, m.keys.Oldest):
-		return m, m.moveCursor(+m.rowCount())
-	case msg.String() == "esc" && m.help.ShowAll:
+	case m.keys.Nav.matches(msg):
+		return m, m.moveCursor(m.keys.Nav.move(msg, m.cursor, m.rowCount(), m.listH(), nil) - m.cursor)
+	case foldsHelp(msg, m.help):
 		return m, m.toggleHelp() // esc folds the help before it quits
 	case key.Matches(msg, m.keys.Quit), msg.String() == "q" && m.ti.Value() == "":
 		// q quits only while the filter is empty; otherwise it is text, like ?.
 		return m, m.quit()
-	case key.Matches(msg, m.keys.Help), msg.String() == "?" && m.ti.Value() == "":
+	case isHelpKey(msg, m.ti.Value()):
 		return m, m.toggleHelp()
 	case key.Matches(msg, m.keys.Open):
 		if m.current() == nil {
@@ -1243,14 +1214,6 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.resizeList(false)
 	case key.Matches(msg, m.keys.Grow):
 		return m, m.resizeList(true)
-	case key.Matches(msg, m.keys.Up):
-		return m, m.moveCursor(up)
-	case key.Matches(msg, m.keys.Down):
-		return m, m.moveCursor(-up)
-	case key.Matches(msg, m.keys.PageUp):
-		return m, m.moveCursor(up * m.listH())
-	case key.Matches(msg, m.keys.PageDown):
-		return m, m.moveCursor(-up * m.listH())
 	case key.Matches(msg, m.keys.PrevUp):
 		m.prevVP.ScrollUp(3)
 		return m, nil
@@ -1291,7 +1254,7 @@ func (m *model) handleFullKey(msg tea.KeyPressMsg) tea.Cmd {
 	case key.Matches(msg, m.fullKeys.Back):
 		// esc first folds the help, then drops an active search, then leaves
 		// the full view.
-		if m.help.ShowAll && msg.String() == "esc" {
+		if foldsHelp(msg, m.help) {
 			return m.toggleHelp()
 		}
 		if m.searchTerm != "" && msg.String() == "esc" {
@@ -1604,11 +1567,7 @@ func (m *model) mainLines() []string {
 // ShowAll on. Lines are cut to the width: bubbles' help keeps appending items
 // past its width when the ellipsis does not fit.
 func (m *model) footLines(keys help.KeyMap) []string {
-	lines := strings.Split(m.help.View(keys), "\n")
-	lines = lines[:min(len(lines), m.footH())]
-	for i, l := range lines {
-		lines[i] = truncate(l, max(0, m.width-4))
-	}
+	lines := helpLines(m.help, keys, m.width-4, m.footH())
 	if m.flash != "" {
 		lines[len(lines)-1] = truncate(stFlash.Render(m.flash), max(0, m.width-4))
 	}
