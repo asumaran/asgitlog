@@ -151,7 +151,7 @@ go build -o asgitlog .     # local build (plugin runs ./asgitlog from the repo r
 ./asgitlog -dump -show HEAD -width 140    # a commit's preview, header + delta
 go vet ./... && go test ./...
 scripts/pty-check.py ./asgitlog           # end-to-end on a pty (python3 + pyte)
-herdr plugin link ~/Developer/asgitlog    # register the working copy (no build step)
+herdr plugin link "$PWD"   # register the working copy (no build step)
 ```
 
 ## Demo recording

@@ -61,7 +61,7 @@ go build -o asgitlog .          # plugin runs ./asgitlog from the repo root
 ./asgitlog -dump -show HEAD~2 -width 140   # one commit's preview (header + delta)
 go vet ./... && go test ./...
 scripts/pty-check.py ./asgitlog
-herdr plugin link ~/Developer/asgitlog   # link does NOT run [[build]]; go build yourself
+herdr plugin link "$PWD"   # link does NOT run [[build]]; go build yourself
 ```
 
 Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
