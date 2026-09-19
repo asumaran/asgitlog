@@ -39,6 +39,10 @@ are split by concern but everything stays in `package main`:
 - `preview.go`: native header with the file list, `git show | delta` as a
   `tea.Cmd`, file header detection, output cap.
 - `hunk.go`: hunk as the alternative diff renderer, captured off a pty.
+  The same `hunk.go` and `hunk_test.go` ship in github.com/asumaran/gotochanged
+  (copied, not imported: there is no shared library). A pull request only
+  needs to change them here; the maintainer ports the change. Tests of what
+  asgitlog does with the render live in `preview_test.go`.
 - `prefs.go`: persisted layout, diff mode and split sizes.
 - `cache.go`: the rendered diffs kept on disk between runs.
 - `ui.go`: the bubbletea model/Update/View, modes, geometry, pooled
