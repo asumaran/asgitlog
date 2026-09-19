@@ -1,3 +1,10 @@
+## v0.5.0 (2026-09-19)
+
+* feat(ui): show the list's position under the list (8fea744)
+* docs(dev): link the plugin from the checkout with $PWD (63faec4)
+* test(pty): wait for the preview before reading the scoped log frame (8fae4cc)
+* ci: spend less time on CI and on releases (93049cf)
+
 ## v0.4.0 (2026-09-19)
 
 * test(pty): run the TUI check without delta (74025a8)
