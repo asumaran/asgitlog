@@ -198,7 +198,8 @@ check(re.search(r"  HEAD -> main \d\d/\d\d/\d{4}│$", f0[NEWEST]) is not None, 
 check(f0[NEWEST + 1].startswith("│  " + SIDE + " Ada Lovelace feat: side work") and "side" in f0[NEWEST + 1][-21:], "older commits go down")
 check("tag: v1.0" in f0[NEWEST + 3], "tag decoration on its commit")
 check(counter(f0, "%d/%d" % (ON_MAIN, ON_MAIN)) and f0[INPUT].startswith("│ " + PROMPT), "input above the list, counter on its edge")
-check(f0[LIST_TOP - 1].startswith("├─") and f0[DIVIDER] == "├" + "─" * (COLS - 2) + "┤", "list and details share a section, split by a plain divider")
+check(f0[LIST_TOP - 1].startswith("├─") and re.fullmatch(r"├─ \d+/%d ─+┤" % ON_MAIN, f0[DIVIDER]) and len(f0[DIVIDER]) == COLS,
+      "list and details share a section; the divider says how far down the list is: %r" % f0[DIVIDER][:24])
 check(all(l.startswith("│ ") and l.endswith(" │") for l in f0[DIVIDER + 1:BOTTOM]) and f0[BOTTOM].startswith("├─"), "details framed with padding")
 check(has(f0, "Merge:  ") and has(f0, "diff against the first parent") and has(f0, "── 1 file changed  +1 -0 ─") and has(f0, "── diff ─"), "a clean merge shows what it brought in")
 check(f0[HELP].startswith("│ type filter") and "? help" in f0[HELP] and f0[HELP + 1].startswith("╰─"), "help at the bottom of the frame: %r" % f0[HELP][:60])

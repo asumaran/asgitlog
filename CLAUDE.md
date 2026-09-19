@@ -103,9 +103,12 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   the main section, holding the list AND the commit details split by a divider
   (`mainLines`); and the help, which grows when `?` expands it (the main
   section gives way). The edge over the details (the divider in rows, the top
-  edge in columns) is a plain line: it used to carry the diff mode and the
-  scrolled-away commit, which was dropped as noise. The main section's bottom
-  edge carries `line/total`. Details have a cell of padding, list rows use
+  edge in columns) says nothing about the diff: it used to carry the diff mode
+  and the scrolled-away commit, which was dropped as noise. The edge under the
+  list (the divider in rows, the left part of the bottom edge in columns)
+  carries the list's position, last visible commit out of the listed ones,
+  while the list overflows (`listPos`). The main section's bottom edge carries
+  the details' `line/total`. Details have a cell of padding, list rows use
   their own 2-cell gutter.
   - The list reads TOP-DOWN in both layouts: row 0, the newest commit, is the
     first line, right under the filter input. (A bottom-up list like fzf's

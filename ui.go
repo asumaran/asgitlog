@@ -1420,10 +1420,11 @@ func (m *model) View() tea.View {
 	return v
 }
 
-// hline draws a horizontal border w cells wide between the corners l and r,
-// with optional (already styled) texts set into it near each end.
+// hline draws a horizontal border w cells wide between the corners l and r
+// (either may be empty), with optional (already styled) texts set into it
+// near each end.
 func hline(w int, l, r, left, right string) string {
-	inner := max(0, w-2)
+	inner := max(0, w-ansi.StringWidth(l)-ansi.StringWidth(r))
 	if left != "" {
 		left = " " + left + " "
 	}
@@ -1538,6 +1539,16 @@ func (m *model) listLines() []string {
 	return lines
 }
 
+// listPos is the list's position for the edge under it: the last visible
+// commit out of the listed ones, empty while everything fits.
+func (m *model) listPos() string {
+	total := m.rowCount()
+	if total <= m.listH() {
+		return ""
+	}
+	return stDim.Render(strconv.Itoa(min(total, m.top+m.listH())) + "/" + strconv.Itoa(total))
+}
+
 // diffEdge is what the main section's bottom edge says about the diff: a mark
 // while git's -w is on, and the scroll position.
 func diffEdge(ignoreWS bool, pos string) string {
@@ -1577,13 +1588,13 @@ func (m *model) mainLines() []string {
 			}
 			out = append(out, side+list[i]+side+fit(" "+d, dw)+side)
 		}
-		return append(out, stDim.Render("├"+strings.Repeat("─", lw))+hline(dw+2, "┴", "┤", "", pos))
+		return append(out, hline(lw+1, "├", "", m.listPos(), "")+hline(dw+2, "┴", "┤", "", pos))
 	}
 	out = append(out, hline(w, "├", "┤", "", ""))
 	for _, l := range list {
 		out = append(out, side+l+side)
 	}
-	out = append(out, hline(w, "├", "┤", "", ""))
+	out = append(out, hline(w, "├", "┤", m.listPos(), ""))
 	for _, d := range details {
 		out = append(out, side+fit(" "+d, dw)+side)
 	}
