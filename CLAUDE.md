@@ -144,6 +144,16 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   key uses the EFFECTIVE mode, so auto shares renders with the explicit modes.
   Without delta in `PATH` the diff falls back to `git show --color=always`
   (the `ctrl+t` flash says so). Output is capped at 16 MiB.
+- **Whitespace** (`ctrl+s` in the list and in the full view, setting
+  `whitespace`): git's `-w` (`--ignore-all-space`, what GitHub's "Hide
+  whitespace" does) on the `git show` / `git diff HEAD` that makes the patch,
+  so it works the same with delta, hunk and plain git. It travels in
+  `diffTool.ignoreWS`, which puts it in the render key and in the disk cache's
+  address. A commit with nothing left says `(only whitespace changes)`; the
+  file list and the counts of the header still come from the full numstat.
+  While it is on, `[-w]` stands on the main section's bottom edge before the
+  scroll position (`diffEdge`) and next to the diff mode in the full view's
+  title.
 - **hunk as an alternative renderer** (`ctrl+r`, setting `renderer`, only
   when `hunk` is in `PATH`; a saved `hunk` without the binary falls back to
   delta). Only its looks are wanted. hunk has NO static output (`hunk pager`
@@ -236,7 +246,8 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   toggles while the query is empty; `f1` always works. A hand-made overlay
   with section titles and notes was tried and dropped; the filter's `~word`
   hint lives on as a help-only binding.
-- **Settings** (`layout`, `diff`, `renderer`, `split-rows`, `split-columns`)
+- **Settings** (`layout`, `diff`, `renderer`, `whitespace`, `split-rows`,
+  `split-columns`)
   are one plain-text file each under `${XDG_STATE_HOME:-~/.local/state}/asgitlog/`,
   not the herdr plugin state dir: the popup and the shell binary share them.
 - **Plugin pane cwd**: herdr starts plugin panes in the plugin root and

@@ -119,8 +119,8 @@ func runDump(m *model, query, show string, limit, width int) int {
 		fmt.Println(s)
 	}
 	fmt.Println("repo:  ", loadRepoInfo())
-	fmt.Printf("prefs:  layout=%s diff=%s split-rows=%d split-columns=%d (%s)\n",
-		m.prefs.layout, m.prefs.diff, m.prefs.splitRows, m.prefs.splitColumns, homeRel(prefsDir()))
+	fmt.Printf("prefs:  layout=%s diff=%s ignore-whitespace=%v split-rows=%d split-columns=%d (%s)\n",
+		m.prefs.layout, m.prefs.diff, m.prefs.ignoreWS, m.prefs.splitRows, m.prefs.splitColumns, homeRel(prefsDir()))
 	if s := m.scope(); s != "" {
 		fmt.Println("scope: ", s)
 	}

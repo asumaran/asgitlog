@@ -25,7 +25,7 @@ func TestDiskCacheRoundTrip(t *testing.T) {
 	c := testCache(t)
 	bin := filepath.Join(t.TempDir(), "delta")
 	os.WriteFile(bin, []byte("v1"), 0o755)
-	tool := diffTool{toolDelta, bin}
+	tool := diffTool{name: toolDelta, bin: bin}
 	if _, ok := c.get(tool, "abc", 100, diffSBS, nil); ok {
 		t.Fatal("empty cache hit")
 	}
@@ -38,7 +38,7 @@ func TestDiskCacheRoundTrip(t *testing.T) {
 		"width": func() bool { _, ok := c.get(tool, "abc", 101, diffSBS, nil); return ok }(),
 		"mode":  func() bool { _, ok := c.get(tool, "abc", 100, diffSingle, nil); return ok }(),
 		"paths": func() bool { _, ok := c.get(tool, "abc", 100, diffSBS, []string{"src"}); return ok }(),
-		"tool":  func() bool { _, ok := c.get(diffTool{toolHunk, bin}, "abc", 100, diffSBS, nil); return ok }(),
+		"tool":  func() bool { _, ok := c.get(diffTool{name: toolHunk, bin: bin}, "abc", 100, diffSBS, nil); return ok }(),
 		"hash":  func() bool { _, ok := c.get(tool, "abd", 100, diffSBS, nil); return ok }(),
 	} {
 		if hit {
@@ -67,7 +67,7 @@ func TestDiskCacheFollowsTheTool(t *testing.T) {
 	c := testCache(t)
 	bin := filepath.Join(t.TempDir(), "hunk")
 	os.WriteFile(bin, []byte("v1"), 0o755)
-	tool := diffTool{toolHunk, bin}
+	tool := diffTool{name: toolHunk, bin: bin}
 	c.put(tool, "abc", 100, diffSBS, nil, "old looks")
 
 	// A new binary (an upgrade) is a new fingerprint for the next run.
@@ -91,7 +91,7 @@ func TestDiskCacheFollowsTheTool(t *testing.T) {
 
 func TestDiskCachePrune(t *testing.T) {
 	c := testCache(t)
-	tool := diffTool{toolDelta, "/nonexistent/delta"}
+	tool := diffTool{name: toolDelta, bin: "/nonexistent/delta"}
 	body := strings.Repeat("x", 4000) // incompressible enough: sizes are what gzip leaves
 	for i, hash := range []string{"old", "mid", "new"} {
 		c.put(tool, hash, 100, diffSBS, nil, body+hash)
@@ -123,7 +123,7 @@ func TestRenderPreviewUsesTheDiskCache(t *testing.T) {
 	renderCache = testCache(t)
 	t.Cleanup(func() { renderCache = nil })
 	second := bySubject(t, collectLog(t, logOpts{}), "second commit")
-	tool := diffTool{toolDelta, deltaBin}
+	tool := diffTool{name: toolDelta, bin: deltaBin}
 	first := renderPreviewCmd(context.Background(), *second, 90, diffSingle, tool, nil)().(previewMsg)
 	if first.err != nil {
 		t.Fatal(first.err)

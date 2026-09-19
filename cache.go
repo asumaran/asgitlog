@@ -89,6 +89,9 @@ func (c *diskCache) fingerprint(tool diffTool) string {
 }
 
 func (c *diskCache) path(tool diffTool, hash string, width int, mode string, paths []string) string {
+	if tool.ignoreWS {
+		mode += "-w"
+	}
 	sum := sha256.Sum256([]byte(strings.Join(append([]string{
 		cacheFormat, c.fingerprint(tool), hash, strconv.Itoa(width), mode,
 	}, paths...), "\x00")))

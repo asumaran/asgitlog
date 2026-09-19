@@ -33,8 +33,9 @@ type prefs struct {
 	layout       string
 	diff         string
 	tool         string
-	splitRows    int // preview height, percent of the body
-	splitColumns int // preview width, percent of the screen
+	splitRows    int  // preview height, percent of the body
+	splitColumns int  // preview width, percent of the screen
+	ignoreWS     bool // git's -w: changes in whitespace are left out of the diffs
 }
 
 func prefsDir() string {
@@ -91,6 +92,7 @@ func loadPrefs() prefs {
 	if readPref("renderer") == toolHunk {
 		p.tool = toolHunk
 	}
+	p.ignoreWS = readPref("whitespace") == "ignore"
 	return p
 }
 

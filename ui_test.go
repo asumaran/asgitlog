@@ -578,8 +578,8 @@ func TestHelpKeyOnlyWithEmptyQuery(t *testing.T) {
 	if !m.help.ShowAll || !strings.Contains(s, "search the diffs") || !strings.Contains(s, "~word") || strings.Contains(s, "• enter full diff") {
 		t.Fatalf("? on an empty query should expand the help:\n%s", s)
 	}
-	if m.mainH() != mainH-4 || len(lines(m)) != 43 || !strings.HasPrefix(lines(m)[42], "╰─") || !strings.HasPrefix(lines(m)[36], "├─") {
-		t.Errorf("the main section gives the help its 5 lines: main %d->%d\n%s", mainH, m.mainH(), s)
+	if m.mainH() != mainH-5 || len(lines(m)) != 43 || !strings.HasPrefix(lines(m)[42], "╰─") || !strings.HasPrefix(lines(m)[35], "├─") {
+		t.Errorf("the main section gives the help its 6 lines: main %d->%d\n%s", mainH, m.mainH(), s)
 	}
 	press(m, "esc")
 	if m.help.ShowAll || m.mainH() != mainH || !strings.Contains(screen(m), "• enter full diff") {
@@ -754,7 +754,7 @@ func TestToggleTool(t *testing.T) {
 	m.hunkBin = "/usr/bin/hunk"
 	delta := m.wantKey
 	press(m, "ctrl+r")
-	if m.tool() != (diffTool{toolHunk, "/usr/bin/hunk"}) || pref("renderer") != toolHunk || m.flash != "diffs by hunk" ||
+	if m.tool() != (diffTool{name: toolHunk, bin: "/usr/bin/hunk"}) || pref("renderer") != toolHunk || m.flash != "diffs by hunk" ||
 		m.wantKey == delta || !strings.Contains(m.wantKey, "|hunk|") {
 		t.Errorf("ctrl+r: tool=%+v pref=%q flash=%q key=%q", m.tool(), pref("renderer"), m.flash, m.wantKey)
 	}
@@ -828,5 +828,34 @@ func TestWantedRenderTakesASlot(t *testing.T) {
 	m.Update(previewMsg{key: keyAt(m, 6), cancelled: true, err: context.Canceled})
 	if !only(m, keyAt(m, 3), keyAt(m, 4), keyAt(m, 5)) {
 		t.Errorf("the selection renders on the freed slot: live=%v", flying(m, false))
+	}
+}
+
+// TestWhitespaceToggle: ctrl+s flips git's -w in the list and in the full
+// view, says so, asks for another render and is there for the next run.
+func TestWhitespaceToggle(t *testing.T) {
+	m := testModel(t, 3)
+	before := keyAt(m, 0)
+	press(m, "ctrl+s")
+	if !m.prefs.ignoreWS || pref("whitespace") != "ignore" || !loadPrefs().ignoreWS || keyAt(m, 0) == before ||
+		!strings.Contains(screen(m), "whitespace: ignored") {
+		t.Errorf("ignoreWS=%v saved=%q key %q -> %q\n%s", m.prefs.ignoreWS, pref("whitespace"), before, keyAt(m, 0), screen(m))
+	}
+	// The confirmation is cleared by a timer; the mark stays on the details'
+	// edge, and in the full view's title.
+	if s := screen(m); !strings.Contains(s, "[-w] ─") {
+		t.Errorf("the bottom edge should carry [-w]:\n%s", s)
+	}
+	press(m, "enter")
+	if first := lines(m)[0]; !strings.Contains(first, "[-w]") {
+		t.Errorf("the full view's title should carry [-w]: %q", first)
+	}
+	press(m, "ctrl+s")
+	if strings.Contains(screen(m), "[-w]") {
+		t.Error("the mark goes away with the setting")
+	}
+	press(m, "esc", "ctrl+s", "enter", "ctrl+s")
+	if m.prefs.ignoreWS || pref("whitespace") != "show" || loadPrefs().ignoreWS {
+		t.Errorf("the full view toggles it too: ignoreWS=%v saved=%q", m.prefs.ignoreWS, pref("whitespace"))
 	}
 }

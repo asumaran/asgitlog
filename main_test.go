@@ -747,7 +747,7 @@ func TestRenderDiffWithDelta(t *testing.T) {
 	gitRepo(t)
 	second := bySubject(t, collectLog(t, logOpts{}), "second commit")
 	for _, sbs := range []bool{true, false} {
-		out, err := renderDiff(context.Background(), second, 90, sbs, diffTool{toolDelta, deltaBin}, nil, nil)
+		out, err := renderDiff(context.Background(), second, 90, sbs, diffTool{name: toolDelta, bin: deltaBin}, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

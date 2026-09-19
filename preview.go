@@ -56,13 +56,20 @@ type previewMsg struct {
 // renderCache keeps the rendered diffs between runs; nil (tests) keeps none.
 var renderCache *diskCache
 
-// diffTool is what renders the diff: delta or hunk, or plain git when bin is
-// empty.
-type diffTool struct{ name, bin string }
+// diffTool is how the diff is made: what renders it (delta or hunk, or plain
+// git when bin is empty) and whether git leaves the changes in whitespace out
+// of the patch (its -w, what GitHub's "Hide whitespace" does).
+type diffTool struct {
+	name, bin string
+	ignoreWS  bool
+}
 
 // previewKey identifies a render. mode is the effective diff mode (auto is
 // resolved by the caller), so auto and an explicit mode share their renders.
 func previewKey(hash string, width int, tool diffTool, mode string) string {
+	if tool.ignoreWS {
+		mode += "-w"
+	}
 	return hash + "|" + strconv.Itoa(width) + "|" + tool.name + "|" + mode
 }
 
@@ -84,6 +91,9 @@ func renderPreviewCmd(ctx context.Context, c commit, width int, mode string, too
 		}
 		rendered := func(diff string, partial bool) previewMsg {
 			content := previewHeader(&c, &d, width)
+			if diff == "" && tool.ignoreWS && len(d.files) > 0 {
+				diff = stDim.Render("(only whitespace changes)")
+			}
 			if diff != "" { // an empty commit already says "no changes"
 				content += "\n\n" + sectionRule(stLabel.Render("diff"), width) + "\n\n" + diff
 			}
@@ -128,6 +138,9 @@ func renderDiff(ctx context.Context, c *commit, width int, sbs bool, tool diffTo
 		args = []string{"-c", "core.quotepath=false", "diff", "HEAD", color}
 	} else {
 		args = append(append([]string{}, showArgs...), color, "--format=", c.hash)
+	}
+	if tool.ignoreWS {
+		args = append(args, "-w")
 	}
 	git := exec.CommandContext(ctx, "git", append(args, pathArgs(paths)...)...)
 	if tool.name == toolHunk {

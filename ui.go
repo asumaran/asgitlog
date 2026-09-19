@@ -97,6 +97,7 @@ type listKeys struct {
 	All      key.Binding
 	Pickaxe  key.Binding
 	Tool     key.Binding
+	Space    key.Binding
 	Copy     key.Binding
 	Browse   key.Binding
 	Help     key.Binding
@@ -113,8 +114,8 @@ func (k listKeys) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Filter, k.Fuzzy, k.Up, k.PageUp, k.ListTop},
 		{k.Newest, k.Open, k.NextFile, k.PrevFile, k.PrevUp},
-		{k.Shrink, k.Layout, k.DiffMode, k.All, k.Pickaxe},
-		{k.Tool, k.Copy, k.Browse, k.Help, k.Quit},
+		{k.Shrink, k.Layout, k.DiffMode, k.Tool, k.Space},
+		{k.All, k.Pickaxe, k.Copy, k.Browse, k.Help, k.Quit},
 	}
 }
 
@@ -152,6 +153,7 @@ func defaultListKeys() listKeys {
 		All:      key.NewBinding(key.WithKeys("ctrl+a"), key.WithHelp("^a", "all refs / current branch")),
 		Pickaxe:  key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("^g", "search the diffs (git log -S)")),
 		Tool:     key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("^r", "diffs by delta / hunk")),
+		Space:    key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("^s", "show / ignore whitespace")),
 		Copy:     key.NewBinding(key.WithKeys("ctrl+y"), key.WithHelp("^y", "copy the hash")),
 		Browse:   key.NewBinding(key.WithKeys("ctrl+o"), key.WithHelp("^o", "open the commit in the browser")),
 		Help:     key.NewBinding(key.WithKeys("f1"), key.WithHelp("?", "help")),
@@ -173,6 +175,7 @@ type fullKeys struct {
 	Prev     key.Binding
 	DiffMode key.Binding
 	Tool     key.Binding
+	Space    key.Binding
 	Copy     key.Binding
 	Browse   key.Binding
 	Help     key.Binding
@@ -188,8 +191,8 @@ func (k fullKeys) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Scroll, k.Page, k.Top, k.Older},
 		{k.NextFile, k.PrevFile, k.Search, k.Next},
-		{k.DiffMode, k.Tool, k.Copy, k.Browse},
-		{k.Help, k.Back},
+		{k.DiffMode, k.Tool, k.Space, k.Copy},
+		{k.Browse, k.Help, k.Back},
 	}
 }
 
@@ -208,6 +211,7 @@ func defaultFullKeys() fullKeys {
 		Prev:     key.NewBinding(key.WithKeys("N")),
 		DiffMode: key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("^t", "diff mode")),
 		Tool:     key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("^r", "diffs by delta / hunk")),
+		Space:    key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("^s", "show / ignore whitespace")),
 		Copy:     key.NewBinding(key.WithKeys("y", "ctrl+y"), key.WithHelp("y", "copy the hash")),
 		Browse:   key.NewBinding(key.WithKeys("o", "ctrl+o"), key.WithHelp("o", "open the commit in the browser")),
 		Help:     key.NewBinding(key.WithKeys("?", "f1"), key.WithHelp("?", "help")),
@@ -927,9 +931,20 @@ func (m *model) toggleLayout() tea.Cmd {
 // else delta (or plain git, without delta).
 func (m *model) tool() diffTool {
 	if m.prefs.tool == toolHunk && m.hunkBin != "" {
-		return diffTool{toolHunk, m.hunkBin}
+		return diffTool{toolHunk, m.hunkBin, m.prefs.ignoreWS}
 	}
-	return diffTool{toolDelta, m.deltaBin}
+	return diffTool{toolDelta, m.deltaBin, m.prefs.ignoreWS}
+}
+
+// toggleWhitespace turns git's -w on and off for every diff.
+func (m *model) toggleWhitespace() tea.Cmd {
+	m.prefs.ignoreWS = !m.prefs.ignoreWS
+	value, label := "show", "whitespace: shown"
+	if m.prefs.ignoreWS {
+		value, label = "ignore", "whitespace: ignored"
+	}
+	savePref("whitespace", value)
+	return tea.Batch(m.updatePreview(), m.setFlash(label))
 }
 
 // toggleTool switches between delta and hunk.
@@ -1203,6 +1218,8 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.cycleDiffMode()
 	case key.Matches(msg, m.keys.Tool):
 		return m, m.toggleTool()
+	case key.Matches(msg, m.keys.Space):
+		return m, m.toggleWhitespace()
 	case key.Matches(msg, m.keys.Shrink):
 		return m, m.resizeList(false)
 	case key.Matches(msg, m.keys.Grow):
@@ -1272,6 +1289,8 @@ func (m *model) handleFullKey(msg tea.KeyPressMsg) tea.Cmd {
 		return m.cycleDiffMode()
 	case key.Matches(msg, m.fullKeys.Tool):
 		return m.toggleTool()
+	case key.Matches(msg, m.fullKeys.Space):
+		return m.toggleWhitespace()
 	case key.Matches(msg, m.fullKeys.Older):
 		return m.moveCursor(+1)
 	case key.Matches(msg, m.fullKeys.Newer):
@@ -1497,6 +1516,19 @@ func (m *model) listLines() []string {
 	return lines
 }
 
+// diffEdge is what the main section's bottom edge says about the diff: a mark
+// while git's -w is on, and the scroll position.
+func diffEdge(ignoreWS bool, pos string) string {
+	if !ignoreWS {
+		return pos
+	}
+	mark := stScope.Render("[-w]")
+	if pos == "" {
+		return mark
+	}
+	return mark + stDim.Render(" ─ ") + pos
+}
+
 // mainLines is the list and the commit details between the edges shared with
 // the filter input and the help, split by a divider: horizontal in the rows
 // layout, vertical in the columns layout. The edge over the details is a plain
@@ -1507,6 +1539,7 @@ func (m *model) mainLines() []string {
 	if total := m.prevVP.TotalLineCount(); total > m.prevVP.Height() {
 		pos = stDim.Render(strconv.Itoa(min(total, m.prevVP.YOffset()+m.prevVP.Height())) + "/" + strconv.Itoa(total))
 	}
+	pos = diffEdge(m.prefs.ignoreWS, pos)
 	list := m.listLines()
 	details := strings.Split(m.prevVP.View(), "\n")
 	dw := m.detailsW()
@@ -1559,7 +1592,11 @@ func (m *model) fullView() string {
 			stHash.Render(c.short()) + " " + truncate(c.subject(), max(10, m.width/2))
 	}
 	pos := strconv.Itoa(int(m.fullVP.ScrollPercent()*100)) + "%"
-	head := title + "  " + stLabel.Render(diffLabel(m.prefs.diff, m.fullVP.Width())) + "  " + stDim.Render(pos)
+	mode := stLabel.Render(diffLabel(m.prefs.diff, m.fullVP.Width()))
+	if m.prefs.ignoreWS {
+		mode += "  " + stScope.Render("[-w]")
+	}
+	head := title + "  " + mode + "  " + stDim.Render(pos)
 	if m.searchTerm != "" {
 		found := "no matches"
 		if n := len(m.matchLines); n > 0 {

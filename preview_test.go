@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -58,5 +60,42 @@ func TestRenderDiffWithHunk(t *testing.T) {
 	cancel()
 	if _, err := renderDiff(ctx, second, 90, true, diffTool{name: toolHunk, bin: hunkBin}, nil, nil); err == nil {
 		t.Error("a cancelled render should fail")
+	}
+}
+
+// TestRenderDiffIgnoringWhitespace: -w keeps the real changes and says so when
+// there is nothing else. The uncommitted changes are the commit under test.
+func TestRenderDiffIgnoringWhitespace(t *testing.T) {
+	dir := gitRepo(t)
+	wt := commit{wt: true}
+	write := func(content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	render := func(tool diffTool) string {
+		t.Helper()
+		out, err := renderDiff(context.Background(), &wt, 90, false, tool, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ansi.Strip(out)
+	}
+	write("one\n\t2\nthree\nfour\n") // HEAD has one, 2, three
+	if out := render(diffTool{}); !strings.Contains(out, "-2") || !strings.Contains(out, "+four") {
+		t.Errorf("the plain diff shows the indentation change:\n%s", out)
+	}
+	if out := render(diffTool{ignoreWS: true}); strings.Contains(out, "-2") || !strings.Contains(out, "+four") {
+		t.Errorf("-w keeps +four and drops the indentation change:\n%s", out)
+	}
+
+	write("one\n\t2\nthree\n")
+	msg := renderPreviewCmd(context.Background(), wt, 90, diffSingle, diffTool{ignoreWS: true}, nil)().(previewMsg)
+	if msg.err != nil || !strings.Contains(ansi.Strip(msg.render.content), "only whitespace changes") {
+		t.Errorf("a commit that only changed whitespace says so: err=%v\n%s", msg.err, ansi.Strip(msg.render.content))
+	}
+	if previewKey("h", 90, diffTool{}, diffSingle) == previewKey("h", 90, diffTool{ignoreWS: true}, diffSingle) {
+		t.Error("the two renders of a commit need their own key")
 	}
 }

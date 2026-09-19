@@ -77,6 +77,7 @@ down the history.
 | left click | select a commit |
 | `ctrl+t` | diff mode: auto, side-by-side, single column |
 | `ctrl+r` | render the diffs with delta or with [hunk](https://hunk.dev) (when installed) |
+| `ctrl+s` | show or ignore whitespace changes, like GitHub's "Hide whitespace" (`git show -w`, remembered); `[-w]` on the bottom edge while it is on |
 | `ctrl+l` | preview below (rows) / on the side (columns) |
 | `shift+←`/`shift+→` | shrink / grow the list |
 | `ctrl+a` | all refs / current branch |
@@ -95,7 +96,7 @@ In the full-screen diff:
 | `]`/`[` or `→`/`←` | older / newer commit |
 | `tab`/`shift+tab` | next / previous file |
 | `/`, then `n`/`N` | search, next / previous match (`esc` clears) |
-| `ctrl+t`, `ctrl+r`, `y`, `o`, `?` | diff mode, delta / hunk, copy hash, open in browser, full key help |
+| `ctrl+t`, `ctrl+r`, `ctrl+s`, `y`, `o`, `?` | diff mode, delta / hunk, whitespace, copy hash, open in browser, full key help |
 | `q`, `esc` | back to the list |
 
 ## Behavior notes
@@ -134,7 +135,7 @@ In the full-screen diff:
 - `ctrl+o` builds the URL from the `origin` remote (or the upstream's remote)
   and knows the GitHub, GitLab and Bitbucket commit paths.
 - Settings live in `${XDG_STATE_HOME:-~/.local/state}/asgitlog/` (`layout`,
-  `diff`, `split-rows`, `split-columns`), shared by the popup and the shell
+  `diff`, `renderer`, `whitespace`, `split-rows`, `split-columns`), shared by the popup and the shell
   command.
 - `ASGITLOG_POPUP_WIDTH` / `ASGITLOG_POPUP_HEIGHT` (e.g. `95%`) override the
   popup size from the manifest (85% x 90%). `ASGITLOG_CLIPBOARD` and
