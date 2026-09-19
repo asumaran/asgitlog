@@ -31,7 +31,7 @@ The manifest's `[[build]]` runs `scripts/fetch-binary.sh`, which downloads the
 release binary matching the manifest version and falls back to `go build`
 (`ASGITLOG_BUILD_FROM_SOURCE=1` skips the download). Requires herdr >= 0.7.5
 and `git`. Install `delta` too: without it the diff falls back to git's own
-colors. macOS arm64 binaries only; other platforms build from source.
+colors. Prebuilt binaries for macOS and Linux (arm64 and amd64); anything else builds from source.
 
 Bind a key to the `open` action in `~/.config/herdr/config.toml`:
 
@@ -139,7 +139,8 @@ In the full-screen diff:
   command.
 - `ASGITLOG_POPUP_WIDTH` / `ASGITLOG_POPUP_HEIGHT` (e.g. `95%`) override the
   popup size from the manifest (85% x 90%). `ASGITLOG_CLIPBOARD` and
-  `ASGITLOG_OPENER` replace `pbcopy` and the browser opener.
+  `ASGITLOG_OPENER` replace the clipboard command (`pbcopy` on macOS; `wl-copy`,
+  `xclip` or `xsel` on Linux) and the browser opener (`xdg-open` on Linux).
 
 ## Development
 
@@ -166,4 +167,4 @@ on a personal repository so no work history shows up.
 `scripts/release.sh <X.Y.Z>` gates on a clean tree + green vet/build/test,
 generates the CHANGELOG entry from commit subjects, syncs the manifest
 version, commits, tags and publishes the GitHub release; CI then attaches
-`asgitlog-darwin-arm64`, the asset `fetch-binary.sh` downloads on installs.
+the `asgitlog-<os>-<arch>` binaries (macOS and Linux, arm64 and amd64), the assets `fetch-binary.sh` downloads on installs.

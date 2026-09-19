@@ -10,8 +10,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -1021,16 +1023,32 @@ func (m *model) copyHash() tea.Cmd {
 	}
 }
 
-// copyToClipboard uses ASGITLOG_CLIPBOARD (a command fed on stdin; the pty
-// driver points it at a logging stub) or pbcopy.
+// copyToClipboard feeds s to ASGITLOG_CLIPBOARD (the pty driver points it at
+// a logging stub), to pbcopy on macOS, and elsewhere to the first of wl-copy,
+// xclip and xsel that is installed.
 func copyToClipboard(s string) error {
-	bin := os.Getenv("ASGITLOG_CLIPBOARD")
-	if bin == "" {
-		bin = "pbcopy"
+	argv := clipboardCmd()
+	if len(argv) == 0 {
+		return errors.New("no clipboard command found (wl-copy, xclip or xsel)")
 	}
-	cmd := exec.Command(bin)
+	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin = strings.NewReader(s)
 	return cmd.Run()
+}
+
+func clipboardCmd() []string {
+	if bin := os.Getenv("ASGITLOG_CLIPBOARD"); bin != "" {
+		return []string{bin}
+	}
+	if runtime.GOOS == "darwin" {
+		return []string{"pbcopy"}
+	}
+	for _, argv := range [][]string{{"wl-copy"}, {"xclip", "-selection", "clipboard"}, {"xsel", "--clipboard", "--input"}} {
+		if _, err := exec.LookPath(argv[0]); err == nil {
+			return argv
+		}
+	}
+	return nil
 }
 
 func (m *model) browse() tea.Cmd {
@@ -1053,10 +1071,14 @@ func (m *model) browse() tea.Cmd {
 // created in Chrome's front window so it lands in the profile the user last
 // focused: plain `open` lets Chrome pick its own "last used" profile, which
 // routinely disagrees with the window you were just looking at. Anything else
-// falls back to `open`.
+// falls back to `open`. Outside macOS it is xdg-open.
 func openURL(url string) {
 	if b := os.Getenv("ASGITLOG_OPENER"); b != "" {
 		_ = exec.Command(b, url).Run()
+		return
+	}
+	if runtime.GOOS != "darwin" {
+		_ = exec.Command("xdg-open", url).Run()
 		return
 	}
 	esc := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(url)

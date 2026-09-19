@@ -15,7 +15,7 @@ optionally scoped: `asgitlog [<revision range>...] [-- <path>...]`).
 
 Distributed as a herdr plugin (`herdr plugin install asumaran/asgitlog`; the
 manifest's `[[build]]` runs `scripts/fetch-binary.sh`). Each GitHub Release
-attaches `asgitlog-darwin-arm64`. There is no published library. Modeled on
+attaches the `asgitlog-<os>-<arch>` binaries (macOS and Linux, arm64 and amd64). There is no published library. Modeled on
 `asgotopr` (siblings: `asgotoissues`, `asgoto`).
 
 ## Stack & layout
@@ -231,7 +231,7 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   first). The search highlights with `lipgloss.StyleRanges` per line; the
   viewport's own `SetHighlights` is NOT used because it miscounts lines on
   ANSI content.
-- **Actions** are read-only: `ctrl+y` copies the full hash (`pbcopy`, or
+- **Actions** are read-only: `ctrl+y` copies the full hash (`pbcopy` on macOS, the first of `wl-copy`/`xclip`/`xsel` on Linux, or
   `ASGITLOG_CLIPBOARD`), `ctrl+o` opens the commit on the remote's web page
   (`webURL`/`commitURL`: GitHub, GitLab, Bitbucket shapes; Chrome front-window
   AppleScript like asgotopr, or `ASGITLOG_OPENER`) and stays open. Results show
@@ -319,5 +319,5 @@ after a viewport scroll.
 `scripts/release.sh <X.Y.Z>`: clean-tree + vet/build/test gate, CHANGELOG
 generation from commit subjects, manifest version sync, commit + tag + GitHub
 release; CI (`.github/workflows/release.yml`) attaches
-`asgitlog-darwin-arm64`. Releasing never touches the linked plugin's
+the `asgitlog-<os>-<arch>` binaries (macOS and Linux, arm64 and amd64). Releasing never touches the linked plugin's
 `./asgitlog`; rebuild locally to keep testing dev code.
