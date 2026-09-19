@@ -345,6 +345,7 @@ check(t.wait_exit() == 0 and pref("layout") == "rows" and pref("diff") == "auto"
 # ---------- 6. revision / path arguments, working tree row ----------
 t = Term(REPO, args=["--", "other.txt"])
 check(t.wait_for("[-- other.txt]"), "paths after -- scope the log")
+t.wait_for("── 1 file changed")   # the preview is rendered after the list: a slow runner shows the gap
 f = t.frame()
 check(counter(f, "12/12 [-- other.txt]") and has(f, "── 1 file changed  +1 -1 ─") and not has(f, "file.txt"), "and the preview: %r" % f[COUNTER][-30:])
 t.send(ESC); t.wait_exit()
