@@ -1,3 +1,9 @@
+## v0.4.0 (2026-09-19)
+
+* test(pty): run the TUI check without delta (74025a8)
+* feat: support linux and share the release process (1350767)
+* docs: refer to the sibling tools by their new names (d3b3b60)
+
 ## v0.3.0 (2026-09-19)
 
 * feat(preview): ignore whitespace changes with ctrl+s (063a906)
