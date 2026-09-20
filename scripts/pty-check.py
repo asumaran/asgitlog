@@ -185,7 +185,7 @@ def pref(name):
 
 PROMPT = "asgitlog ❯"
 UP, DOWN, RIGHT, ESC, ENTER, TAB, BACKSPACE = b"\x1b[A", b"\x1b[B", b"\x1b[C", b"\x1b", b"\r", b"\t", b"\x7f"
-CTRL_A, CTRL_C, CTRL_G, CTRL_L, CTRL_O, CTRL_T, CTRL_Y, SHIFT_RIGHT = b"\x01", b"\x03", b"\x07", b"\x0c", b"\x0f", b"\x14", b"\x19", b"\x1b[1;2C"
+CTRL_A, CTRL_C, CTRL_G, CTRL_O, CTRL_T, CTRL_Y, PANEL, SHIFT_RIGHT = b"\x01", b"\x03", b"\x07", b"\x0f", b"\x14", b"\x19", b"\x1bOP", b"\x1b[1;2C"
 
 # Rows layout at 40 lines, one frame of four sections sharing their edges:
 # summary 1, input 3 (counter on the edge over it, 2), main 4-37 (list 5-13,
@@ -209,7 +209,7 @@ check(f0[LIST_TOP - 1].startswith("├─") and re.fullmatch(r"├─+ %d/%d ─
       "list and details share a section; the divider carries the counter at its right end: %r" % f0[DIVIDER][-24:])
 check(all(l.startswith("│ ") and l.endswith(" │") for l in f0[DIVIDER + 1:BOTTOM]) and f0[BOTTOM].startswith("├─"), "details framed with padding")
 check(has(f0, "Merge:  ") and has(f0, "diff against the first parent") and has(f0, "── 1 file changed  +1 -0 ─") and has(f0, "── diff ─"), "a clean merge shows what it brought in")
-check(f0[HELP].startswith("│ type filter") and "? help" in f0[HELP] and f0[HELP + 1].startswith("╰─"), "help at the bottom of the frame: %r" % f0[HELP][:60])
+check(f0[HELP].startswith("│ type filter") and "f1 options" in f0[HELP] and f0[HELP + 1].startswith("╰─"), "help at the bottom of the frame: %r" % f0[HELP][:60])
 check([i for i, l in enumerate(f0) if l[0] in "╭╰"] == [0, ROWS - 1], "one frame: no section spends lines on borders of its own")
 check(b"\x1b[?1049h" in t.raw, "alt screen entered")
 
@@ -265,8 +265,16 @@ f = t.frame()
 check(counter(f, "%d/%d" % (ON_MAIN, ON_MAIN)) and len(selected(f)) == 1 and NEEDLE in selected(f)[0], "clearing the query stays on the found commit")
 
 # ---------- 3. columns layout, diff mode, list size: all persisted ----------
-t.send(CTRL_L, settle=0.8)
+# The layout is chosen in the panel: f1 lays it over the frame.
+rows = len(t.frame())
+t.send(PANEL, settle=0.5)
+f = t.frame(); dump("panel", f)
+check(len(f) == rows and has(f, "╭─ options ") and has(f, "▌ Diff renderer") and has(f, "search the diffs") and f[-1].startswith("╰─"),
+      "f1 opens the options and the keys over a frame that keeps its size")
+t.send(b"zz"); t.send(b"\x1b[B" * 3); t.send(b" ", settle=0.8)   # down to Layout, space changes it
+t.send(ESC, settle=0.8)
 f = t.frame(); dump("columns layout", f[:7])
+check(f[INPUT].startswith("│ " + PROMPT + " ") and "zz" not in f[INPUT] and not has(f, "╭─ options "), "esc closes the panel; it took the keys, the filter did not")
 sel = selected(f)
 check(len(sel) == 1 and NEEDLE in sel[0], "cursor stays on the same commit across the layout change")
 check(f[INPUT].startswith("│ " + PROMPT) and counter(f, "%d/%d" % (ON_MAIN, ON_MAIN)), "columns: same input, list top-down")
@@ -287,7 +295,7 @@ t.pump(0.8)
 t.resize(30, 110); t.pump(1.0)
 f = t.frame()
 sel = selected(f)
-check(len(sel) == 1 and NEEDLE in sel[0] and f[INPUT].startswith("│ " + PROMPT) and "? help" in f[-2], "resize: re-laid out, same commit selected")
+check(len(sel) == 1 and NEEDLE in sel[0] and f[INPUT].startswith("│ " + PROMPT) and "f1 options" in f[-2], "resize: re-laid out, same commit selected")
 
 # ---------- 4. full view ----------
 t.send(ENTER, settle=0.2)
@@ -321,10 +329,10 @@ check("args:https://github.com/acme/widgets/commit/" + NEEDLE_FULL in stublog(),
 t.pump(2.2)  # let the "opened ..." status give the last line back to the help
 t.send(b"?")
 f = t.frame()
-check(has(f[-4:], "next / previous match") and has(f[-4:], "copy the hash") and has(f[-4:], "page, half page"),
-      "? expands the help line into the full help, in place")
-check(len([l for l in f[-4:] if l.strip()]) == 4 and NEEDLE in f[0], "the diff stays on screen above it")
-t.send(b"?"); check(has(t.frame()[-1:], "q/esc back") and not has(t.frame(), "page, half page"), "? again folds it")
+check(has(f, "next / previous match") and has(f, "copy the hash") and has(f, "page, half page") and has(f, "▌ Diff renderer") and not has(f, "Layout"),
+      "? opens the panel in the full view: its keys and its options")
+check(has(f[-1:], "q/esc back") and NEEDLE in f[0], "the full view stays in place under it")
+t.send(b"?"); check(has(t.frame()[-1:], "q/esc back") and not has(t.frame(), "page, half page"), "? again closes it")
 t.send(b"q")
 check(t.wait_for(PROMPT, 2.0) and NEEDLE in (selected(t.frame()) or [""])[0], "q returns to the list, selection intact")
 
@@ -346,7 +354,7 @@ f = t.frame(); dump("content search", f[:7])
 check(counter(f, '2/2 [-S"revision 47"]') and "change number 48" in f[LIST_TOP] and "change number 47" in f[LIST_TOP + 1], "only the commits adding or removing the text")
 t.send(CTRL_G); t.send(BACKSPACE * 11); t.send(ENTER, settle=1.0)
 check(counter(t.frame(), "%d/%d" % (ON_MAIN, ON_MAIN)), "an empty text lifts the scope")
-t.send(CTRL_L); t.send(CTRL_T)
+t.send(PANEL); t.send(b"\x1b[B" * 3); t.send(b" "); t.send(ESC); t.send(CTRL_T)
 t.send(CTRL_C)
 check(t.wait_exit() == 0 and pref("layout") == "rows" and pref("diff") == "auto", "ctrl+c exits; settings back to rows + auto")
 
@@ -389,15 +397,15 @@ check(t.wait_exit() == 1, "any key closes the error view with status 1")
 if shutil.which("hunk"):
     t = Term(REPO)
     check(t.wait_for("side.txt"), "starts with delta's render")
-    t.send(b"\x12", settle=0.2)   # ctrl+r
-    check(t.wait_for("│ diffs by hunk ") and pref("renderer") == "hunk", "ctrl+r: hunk renders the diffs, flashed and persisted")
+    t.send(PANEL); t.send(b" ", settle=0.2); t.send(ESC, settle=0.2)   # the renderer is the panel's first option
+    check(t.wait_for("│ diffs by hunk ") and pref("renderer") == "hunk", "the panel: hunk renders the diffs, flashed and persisted")
     check(t.wait_for("+1 -0", 8.0), "hunk's file header (path and counts) shows in the details")
     t.pump(0.5)
     f = t.frame(); dump("rendered by hunk", f[DIVIDER:DIVIDER + 16])
     check(all(len(l) == COLS and l.startswith("│") and l.endswith("│") for l in f[1:-1] if not l.startswith("├")), "hunk's screen stays inside the frame")
     check(has(f, "── diff ─") and any(l.startswith("│ ▌") for l in f[DIVIDER + 1:BOTTOM]), "hunk's rows under the native header")
-    t.send(b"\x12", settle=0.5)
-    check(pref("renderer") == "delta", "ctrl+r again: back to delta")
+    t.send(PANEL); t.send(b" ", settle=0.5); t.send(ESC, settle=0.2)
+    check(pref("renderer") == "delta", "again: back to delta")
     t.send(ESC); t.wait_exit()
     # The renders were kept for the next run.
     stored = sum(len(fs) for _, _, fs in os.walk(os.path.join(CACHE, "asgitlog", "renders")))

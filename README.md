@@ -77,15 +77,15 @@ down the history.
 | mouse wheel over the list | move the selection |
 | left click | select a commit |
 | `ctrl+t` | diff mode: auto, side-by-side, single column |
-| `ctrl+r` | render the diffs with delta or with [hunk](https://hunk.dev) (when installed) |
+| panel: Diff renderer | render the diffs with delta or with [hunk](https://hunk.dev) (when installed) |
 | `ctrl+s` | show or ignore whitespace changes, like GitHub's "Hide whitespace" (`git show -w`, remembered); `[-w]` on the bottom edge while it is on |
-| `ctrl+l` | preview below (rows) / on the side (columns) |
+| panel: Layout | preview below (rows) / on the side (columns) |
 | `shift+←`/`shift+→` | shrink / grow the list |
 | `ctrl+a` | all refs / current branch |
 | `ctrl+g` | search the diffs: only commits that add or remove a text |
 | `ctrl+y` | copy the commit hash |
 | `ctrl+o` | open the commit on the remote's web page |
-| `?` (empty filter) or `f1` | expand / fold the full key help |
+| `f1` | open the panel: the renderer, the diff mode, the whitespace, the layout and the history to change in place, and every key (`esc` closes it) |
 | `esc`, `ctrl+c`, `q` with an empty filter | quit |
 
 In the full-screen diff:
@@ -97,7 +97,7 @@ In the full-screen diff:
 | `]`/`[` or `→`/`←` | older / newer commit |
 | `tab`/`shift+tab` | next / previous file |
 | `/`, then `n`/`N` | search, next / previous match (`esc` clears) |
-| `ctrl+t`, `ctrl+r`, `ctrl+s`, `y`, `o`, `?` | diff mode, delta / hunk, whitespace, copy hash, open in browser, full key help |
+| `ctrl+t`, `ctrl+s`, `y`, `o`, `?` | diff mode, whitespace, copy hash, open in browser, the panel (options and keys) |
 | `q`, `esc` | back to the list |
 
 ## Behavior notes
@@ -123,7 +123,7 @@ In the full-screen diff:
   everything else (theme, line numbers, ...) comes from your own delta
   configuration. Jumping between files relies on delta's default file
   header (the path over a rule).
-- `ctrl+r` hands the diffs to hunk instead, for its looks only: hunk is a
+- The panel's Diff renderer option hands the diffs to hunk instead, for its looks only: hunk is a
   full-screen program with no plain output, so asgitlog runs it on an
   off-screen terminal tall enough for the whole patch and shows what it drew.
   The diff shows as soon as hunk has drawn it (about 0.2 s) and its syntax

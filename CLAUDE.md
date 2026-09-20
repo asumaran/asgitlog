@@ -48,9 +48,11 @@ are split by concern but everything stays in `package main`:
   herdr's popup, where the pane's title already says it), the placeholder and
   the `(dev)` mark on the edge over the input. The same file
   in every tool of the family. The `/` search and the `-S` inputs keep their own prompts.
-- `helpfoot.go`: the help at the foot, the key that expands it, its height and
-  its lines cut to the width. The same file in every tool of the family,
-  which took the expandable help from here.
+- `helpfoot.go`: the help line at the foot, cut to the width, and the key
+  that opens the panel. The same file in every tool of the family.
+- `panel.go`: the panel `f1` opens over the screen, options to change in
+  place and every key under them (`option`, `panel`, `panelLines`,
+  `overlay`). The same file in every tool of the family.
 - `listnav.go`: `listNav`, the keys that move the cursor through the list and
   where each one takes it. The same file in every tool of the family, which
   took these keys from here.
@@ -127,8 +129,7 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   borders read as gaps and cost three lines): the repo summary; the filter
   input, whose top edge carries `matches/total [scope]` and the loading mark;
   the main section, holding the list AND the commit details split by a divider
-  (`mainLines`); and the help, which grows when `?` expands it (the main
-  section gives way). The edge over the details (the divider in rows, the top
+  (`mainLines`); and the help line. The edge over the details (the divider in rows, the top
   edge in columns) says nothing about the diff: it used to carry the diff mode
   and the scrolled-away commit, which was dropped as noise. The edge under the
   list (the divider in rows, the left part of the bottom edge in columns)
@@ -182,7 +183,7 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   While it is on, `[-w]` stands on the main section's bottom edge before the
   scroll position (`diffEdge`) and next to the diff mode in the full view's
   title.
-- **hunk as an alternative renderer** (`ctrl+r`, setting `renderer`, only
+- **hunk as an alternative renderer** (the panel's first option, setting `renderer`, only
   when `hunk` is in `PATH`; a saved `hunk` without the binary falls back to
   delta). Only its looks are wanted. hunk has NO static output (`hunk pager`
   passes the patch through when stdout is not a tty, `hunk patch` starts its
@@ -266,16 +267,23 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   through files shared with the family: `clipboard.go`, `openurl.go`, and
   `flash.go` for the confirmation. Results show
   as a 2-second flash in place of the help line.
-- **Help** is bubbles' `help` component and nothing else: the bottom line is
-  its short view, and `?` toggles `help.ShowAll`, which expands it IN PLACE
-  into the full view (one column per `FullHelp()` group of the current
-  context's key map). `footH` measures it and list, preview and full-view
-  viewport give way (`resize` on toggle and on mode switches, since the two
-  contexts differ in height); on a very short terminal the help is cut
-  instead. `esc` folds it before doing anything else. In the list `?` only
-  toggles while the query is empty; `f1` always works. A hand-made overlay
-  with section titles and notes was tried and dropped; the filter's `~word`
-  hint lives on as a help-only binding.
+- **Help and options**: the bottom line is the short view of bubbles' `help`
+  (`helpfoot.go`). `f1` opens
+  the panel (`panel.go`, the same file in every tool of the family): the
+  options on top, to change with `←`/`→` or `space`, and under them every key
+  of the current context's key map, laid out by bubbles' `help` from
+  `FullHelp()`. The panel is spliced over the middle of the screen, which
+  keeps its size, so nothing is resized when it opens; while it is open it
+  takes every key and the mouse, and `esc` closes it before it does anything
+  else. In the list `?` is text for the filter; the full view has no input, so
+  `?` opens the panel there too. `options()` lists the settings of the
+  current view (the full view has no layout and no log scope) and `setOption`
+  is the one place that changes one, for the panel and for the keys that kept
+  a shortcut (`ctrl+t`, `ctrl+s`, `ctrl+a`). The renderer and the layout are
+  chosen once, so they have no key: the panel is where they live. An earlier
+  overlay that only restyled the key list was tried and dropped; this one
+  earns its place with the options. The filter's `~word` hint lives on as a
+  help-only binding.
 - **Settings** (`layout`, `diff`, `renderer`, `whitespace`, `split-rows`,
   `split-columns`)
   are one plain-text file each under the family's state directory

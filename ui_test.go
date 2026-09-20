@@ -65,7 +65,7 @@ func only(m *model, keys ...string) bool {
 func press(m *model, keys ...string) {
 	named := map[string]rune{"enter": tea.KeyEnter, "esc": tea.KeyEscape, "up": tea.KeyUp, "down": tea.KeyDown,
 		"left": tea.KeyLeft, "right": tea.KeyRight, "pgup": tea.KeyPgUp, "pgdown": tea.KeyPgDown,
-		"backspace": tea.KeyBackspace, "tab": tea.KeyTab, "f1": tea.KeyF1, "home": tea.KeyHome, "end": tea.KeyEnd}
+		"backspace": tea.KeyBackspace, "space": tea.KeySpace, "tab": tea.KeyTab, "f1": tea.KeyF1, "home": tea.KeyHome, "end": tea.KeyEnd}
 	for _, k := range keys {
 		var msg tea.KeyPressMsg
 		mods := tea.KeyMod(0)
@@ -123,7 +123,7 @@ func TestGeometry(t *testing.T) {
 	if m.listW() != 158 || m.detailsW() != 158 || m.prevVP.Height() != 24 || m.prevVP.Width() != 156 {
 		t.Errorf("rows widths: list=%d details=%d vp=%dx%d", m.listW(), m.detailsW(), m.prevVP.Width(), m.prevVP.Height())
 	}
-	press(m, "ctrl+l")
+	m.cycle("layout")
 	// Columns: list (25%) and details (75%) at full height, a divider between
 	// them.
 	if m.detailsW() != 118 || m.listW() != 39 || m.listH() != 35 || m.detailsH() != 35 || m.prevVP.Height() != 35 || m.prevVP.Width() != 116 {
@@ -133,7 +133,7 @@ func TestGeometry(t *testing.T) {
 		for range 2 {
 			m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 			// With the help folded and expanded: the frame always fits.
-			for _, view := range []string{"short help", "full help"} {
+			for _, view := range []string{"panel closed", "panel open"} {
 				ls := lines(m)
 				if len(ls) != size[1] {
 					t.Errorf("%v layout=%s %s: view has %d lines", size, m.prefs.layout, view, len(ls))
@@ -145,7 +145,7 @@ func TestGeometry(t *testing.T) {
 				}
 				press(m, "f1")
 			}
-			press(m, "ctrl+l")
+			m.cycle("layout")
 		}
 	}
 }
@@ -205,7 +205,7 @@ func TestRowsLayout(t *testing.T) {
 
 func TestColumnsLayoutIsTopDown(t *testing.T) {
 	m := testModel(t, 5)
-	press(m, "ctrl+l")
+	m.cycle("layout")
 	ls := lines(m)
 	y := m.listY()
 	// Compact rows: hash, relative date, subject; a vertical divider to the
@@ -244,7 +244,7 @@ func TestLayoutTogglePersistsAndKeepsCommit(t *testing.T) {
 	if m.cursor != 3+m.listH() {
 		t.Fatalf("cursor = %d", m.cursor)
 	}
-	press(m, "ctrl+l")
+	m.cycle("layout")
 	if m.prefs.layout != layoutColumns || pref("layout") != layoutColumns {
 		t.Errorf("layout not switched/persisted: %q / %q", m.prefs.layout, pref("layout"))
 	}
@@ -261,7 +261,7 @@ func TestLayoutTogglePersistsAndKeepsCommit(t *testing.T) {
 	if !strings.Contains(screen(m), "▌ "+m.current().short()) {
 		t.Error("selected row not on screen")
 	}
-	press(m, "ctrl+l")
+	m.cycle("layout")
 	if pref("layout") != layoutRows {
 		t.Error("layout not persisted back to rows")
 	}
@@ -274,7 +274,7 @@ func TestResizeList(t *testing.T) {
 	if m.listH() <= h || m.prefs.splitRows != 65 || pref("split-rows") != "65" {
 		t.Errorf("rows: list %d -> %d, split=%d (%q)", h, m.listH(), m.prefs.splitRows, pref("split-rows"))
 	}
-	press(m, "ctrl+l")
+	m.cycle("layout")
 	w := m.listW()
 	press(m, "shift+left")
 	if m.listW() >= w || m.prefs.splitColumns != 80 || pref("split-columns") != "80" || m.prevVP.Width() != m.detailsW()-2 {
@@ -559,13 +559,13 @@ func TestFullViewNavigationAndSearch(t *testing.T) {
 	settle(m)
 	h := m.fullVP.Height()
 	press(m, "?")
-	if s := screen(m); !m.help.ShowAll || !strings.Contains(s, "newer/older") || !strings.Contains(s, "copy the hash") ||
-		m.fullVP.Height() != h-3 || len(lines(m)) != 30 {
-		t.Errorf("? expands the help in place (4 lines) and the viewport gives way (%d -> %d):\n%s", h, m.fullVP.Height(), s)
+	if s := screen(m); !m.panel.open || !strings.Contains(s, "newer/older") || !strings.Contains(s, "copy the hash") ||
+		!strings.Contains(s, "▌ Diff renderer") || strings.Contains(s, "Layout") || m.fullVP.Height() != h || len(lines(m)) != 30 {
+		t.Errorf("? lays the panel over the full view, which keeps its size (%d -> %d):\n%s", h, m.fullVP.Height(), s)
 	}
 	press(m, "esc")
-	if m.mode != modeFull || m.help.ShowAll || m.fullVP.Height() != h {
-		t.Error("esc folds the help first, staying in the full view")
+	if m.mode != modeFull || m.panel.open {
+		t.Error("esc closes the panel first, staying in the full view")
 	}
 	press(m, "esc")
 	settle(m)
@@ -574,28 +574,40 @@ func TestFullViewNavigationAndSearch(t *testing.T) {
 	}
 }
 
-func TestHelpKeyOnlyWithEmptyQuery(t *testing.T) {
+func TestPanelInTheList(t *testing.T) {
 	m := testModel(t, 3)
-	mainH := m.mainH()
-	press(m, "?")
+	mainH, rows := m.mainH(), len(lines(m))
+	press(m, "f1")
 	s := screen(m)
-	if !m.help.ShowAll || !strings.Contains(s, "search the diffs") || !strings.Contains(s, "~word") || strings.Contains(s, "• enter full diff") {
-		t.Fatalf("? on an empty query should expand the help:\n%s", s)
+	if !m.panel.open || !strings.Contains(s, "search the diffs") || !strings.Contains(s, "~word") ||
+		!strings.Contains(s, "Layout") || !strings.Contains(s, "History") {
+		t.Fatalf("f1 should open the panel with the list's options and keys:\n%s", s)
 	}
-	if m.mainH() != mainH-5 || len(lines(m)) != 43 || !strings.HasPrefix(lines(m)[42], "╰─") || !strings.HasPrefix(lines(m)[35], "├─") {
-		t.Errorf("the main section gives the help its 6 lines: main %d->%d\n%s", mainH, m.mainH(), s)
+	if m.mainH() != mainH || len(lines(m)) != rows || !strings.HasPrefix(lines(m)[rows-1], "╰─") {
+		t.Errorf("the frame keeps its size under the panel: main %d->%d\n%s", mainH, m.mainH(), s)
+	}
+	for _, l := range lines(m) {
+		if w := ansi.StringWidth(l); w != m.width {
+			t.Errorf("line is %d cells, want %d: %q", w, m.width, l)
+		}
+	}
+	// The panel takes the keys: nothing reaches the filter or the list.
+	typeText(m, "zz")
+	press(m, "down", "down", "down", "space")
+	if m.ti.Value() != "" || m.cursor != 0 || m.prefs.layout != layoutColumns || pref("layout") != layoutColumns {
+		t.Errorf("space on Layout: filter=%q cursor=%d layout=%q pref=%q", m.ti.Value(), m.cursor, m.prefs.layout, pref("layout"))
 	}
 	press(m, "esc")
-	if m.help.ShowAll || m.mainH() != mainH || !strings.Contains(screen(m), "• enter full diff") {
-		t.Fatal("esc should only fold the help")
+	if m.panel.open || m.mode != modeList {
+		t.Fatal("esc should only close the panel")
 	}
 	typeText(m, "why?")
-	if m.help.ShowAll || m.ti.Value() != "why?" {
-		t.Errorf("? inside a query is just text: help=%v value=%q", m.help.ShowAll, m.ti.Value())
+	if m.panel.open || m.ti.Value() != "why?" {
+		t.Errorf("? is just text in the list: panel=%v value=%q", m.panel.open, m.ti.Value())
 	}
 	press(m, "f1", "f1")
-	if m.help.ShowAll || m.ti.Value() != "why?" {
-		t.Error("f1 toggles the help whatever the query")
+	if m.panel.open || m.ti.Value() != "why?" {
+		t.Error("f1 toggles the panel whatever the query")
 	}
 }
 
@@ -710,11 +722,12 @@ func TestBackToTheNewestCommit(t *testing.T) {
 	if m.cursor != 299 {
 		t.Errorf("alt+down should reach the bottom of the list (oldest), cursor=%d", m.cursor)
 	}
-	press(m, "ctrl+l", "alt+up")
+	m.cycle("layout")
+	press(m, "alt+up")
 	if m.cursor != 0 {
 		t.Errorf("columns: alt+up should reach the top of the list (newest), cursor=%d", m.cursor)
 	}
-	press(m, "ctrl+l")
+	m.cycle("layout")
 
 	// The wheel over the list moves the selection; elsewhere it scrolls the
 	// diff.
@@ -738,7 +751,7 @@ func TestBackToTheNewestCommit(t *testing.T) {
 	if m.cursor != 1 || m.prevVP.YOffset() == 0 {
 		t.Errorf("wheel over the details should scroll them: cursor=%d offset=%d", m.cursor, m.prevVP.YOffset())
 	}
-	press(m, "ctrl+l") // columns: top-down
+	m.cycle("layout") // columns: top-down
 	wheel(tea.MouseWheelDown, 10, m.listY()+2)
 	if m.cursor != 2 {
 		t.Errorf("columns: wheel down over the list should go to older commits, cursor=%d", m.cursor)
@@ -751,21 +764,21 @@ func TestBackToTheNewestCommit(t *testing.T) {
 
 func TestToggleTool(t *testing.T) {
 	m := testModel(t, 5)
-	press(m, "ctrl+r")
+	press(m, "f1", "space", "esc") // the renderer is the panel's first option
 	if m.flash.text != "hunk not found" || m.tool().name != toolDelta || pref("renderer") != "" {
 		t.Errorf("without hunk: flash=%q tool=%q pref=%q", m.flash.text, m.tool().name, pref("renderer"))
 	}
 	m.hunkBin = "/usr/bin/hunk"
 	delta := m.wantKey
-	press(m, "ctrl+r")
+	press(m, "f1", "space", "esc")
 	if m.tool() != (diffTool{name: toolHunk, bin: "/usr/bin/hunk"}) || pref("renderer") != toolHunk || m.flash.text != "diffs by hunk" ||
 		m.wantKey == delta || !strings.Contains(m.wantKey, "|hunk|") {
-		t.Errorf("ctrl+r: tool=%+v pref=%q flash=%q key=%q", m.tool(), pref("renderer"), m.flash.text, m.wantKey)
+		t.Errorf("the panel: tool=%+v pref=%q flash=%q key=%q", m.tool(), pref("renderer"), m.flash.text, m.wantKey)
 	}
 	// Renders are cached per tool, so going back needs no new render.
-	press(m, "enter", "ctrl+r", "esc")
-	if m.tool().name != toolDelta || pref("renderer") != toolDelta || m.wantKey != delta {
-		t.Errorf("ctrl+r in the full view, and back: tool=%q key=%q want %q", m.tool().name, m.wantKey, delta)
+	press(m, "enter", "?", "left", "esc", "esc")
+	if m.tool().name != toolDelta || pref("renderer") != toolDelta || m.wantKey != delta || m.mode != modeList {
+		t.Errorf("the panel in the full view, and back: tool=%q key=%q want %q", m.tool().name, m.wantKey, delta)
 	}
 	// A saved hunk setting without hunk installed falls back to delta.
 	m.prefs.tool, m.hunkBin = toolHunk, ""
