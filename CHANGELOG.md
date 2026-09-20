@@ -1,3 +1,7 @@
+## v0.8.0 (2026-09-20)
+
+* feat(ui): open an options and keys panel with f1 (7de3fea)
+
 ## v0.7.2 (2026-09-20)
 
 * refactor: share the renderers and the render cache (32bb8af)
