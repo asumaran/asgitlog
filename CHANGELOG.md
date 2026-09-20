@@ -1,3 +1,7 @@
+## v0.6.1 (2026-09-19)
+
+* refactor: share the last duplicated helpers (a4e2940)
+
 ## v0.6.0 (2026-09-19)
 
 * feat(ui): placeholder in the filter, name only standalone (f7e08cb)
