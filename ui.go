@@ -337,7 +337,7 @@ func (m *model) addCommits(batch []commit) {
 		m.authorW = max(m.authorW, min(maxAuthorW, ansi.StringWidth(batch[i].author())))
 	}
 	if m.filtering() {
-		m.hits = append(m.hits, filterCommits(m.commits, nil, from, queryTerms(m.query))...)
+		m.hits = append(m.hits, filterCommits(m.commits, nil, from, queryTerms(m.query, false))...)
 	}
 	if m.seekHash != "" {
 		for i := range batch {
@@ -352,7 +352,7 @@ func (m *model) addCommits(batch []commit) {
 
 // ---- visible rows ----
 
-func (m *model) filtering() bool { return len(queryTerms(m.query)) > 0 }
+func (m *model) filtering() bool { return len(queryTerms(m.query, false)) > 0 }
 
 func (m *model) rowCount() int {
 	if m.filtering() {
@@ -418,7 +418,7 @@ func (m *model) applyQuery() {
 		return
 	}
 	keep := m.commitIndex()
-	terms := queryTerms(q)
+	terms := queryTerms(q, false)
 	switch {
 	case len(terms) == 0:
 		m.hits = nil

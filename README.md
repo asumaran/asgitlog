@@ -59,7 +59,8 @@ With paths, the preview's diff and file list are limited to them too.
 The filter input is focused on open, so just type. Words are matched anywhere
 in the row (hash, author, email, subject, refs, date), ignoring case, and all
 of them must match. Prefix a word with `~` to match it fuzzily (`~prvw` finds
-"preview"). Commits always stay in log order.
+"preview"); the other tools of the family take the same syntax with fuzzy as
+the default and `'word` for an exact one. Commits always stay in log order.
 
 The list starts right under the filter input with the newest commit and goes
 down the history.
@@ -134,7 +135,7 @@ In the full-screen diff:
 - The working tree row previews `git diff HEAD` and lists untracked files.
 - `ctrl+o` builds the URL from the `origin` remote (or the upstream's remote)
   and knows the GitHub, GitLab and Bitbucket commit paths.
-- Settings live in `${XDG_STATE_HOME:-~/.local/state}/asgitlog/` (`layout`,
+- Settings live in the state directory herdr gives the plugin `${XDG_STATE_HOME:-~/.local/state}/asgitlog/` (`layout`,
   `diff`, `renderer`, `whitespace`, `split-rows`, `split-columns`), shared by the popup and the shell
   command.
 - `ASGITLOG_POPUP_WIDTH` / `ASGITLOG_POPUP_HEIGHT` (e.g. `95%`) override the

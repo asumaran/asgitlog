@@ -5,7 +5,8 @@ package main
 // split on whitespace and every term must match. A plain term is a
 // case-insensitive substring, which is what a log search almost always wants
 // (a fuzzy subsequence over a whole row matches nearly everything: "fix pane"
-// hits a fifth of herdr's history). A term starting with ~ is fuzzy.
+// hits a fifth of herdr's history). A term starting with ~ is fuzzy; the terms
+// are parsed by queryTerms in match.go, the same in every tool of the family.
 
 import (
 	"strings"
@@ -20,25 +21,6 @@ import (
 type hit struct {
 	idx     int
 	matched []int
-}
-
-type qterm struct {
-	text  string // lowercased for substring terms
-	fuzzy bool
-}
-
-func queryTerms(q string) []qterm {
-	var terms []qterm
-	for _, f := range strings.Fields(q) {
-		if rest, ok := strings.CutPrefix(f, "~"); ok {
-			if rest != "" {
-				terms = append(terms, qterm{text: rest, fuzzy: true})
-			}
-			continue
-		}
-		terms = append(terms, qterm{text: strings.ToLower(f)})
-	}
-	return terms
 }
 
 // foldIndexAll returns the byte offsets of every occurrence of needle (already
@@ -162,5 +144,5 @@ func filterCommits(commits []commit, among []int, from int, terms []qterm) []hit
 // is appended (substring and subsequence alike), so extending the query can
 // only shrink the result.
 func narrows(prev, next string) bool {
-	return len(queryTerms(prev)) > 0 && strings.HasPrefix(next, prev)
+	return len(queryTerms(prev, false)) > 0 && strings.HasPrefix(next, prev)
 }

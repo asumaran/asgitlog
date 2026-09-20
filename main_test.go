@@ -214,7 +214,7 @@ func spelled(c commit, h hit) string {
 
 func TestFilterIsSubstringAndKeepsLogOrder(t *testing.T) {
 	cs := testCommits(t, "x Preview y", "p r e v i e w scattered", "preview", "the PREVIEW pane, a preview")
-	got := filterCommits(cs, nil, 0, queryTerms("preview"))
+	got := filterCommits(cs, nil, 0, queryTerms("preview", false))
 	// Index 1 only matches as a subsequence; index 2 would rank first if scored.
 	if !sameInts(hitIdx(got), []int{0, 2, 3}) {
 		t.Fatalf("hits = %v, want [0 2 3]", hitIdx(got))
@@ -226,17 +226,17 @@ func TestFilterIsSubstringAndKeepsLogOrder(t *testing.T) {
 
 func TestFilterFuzzyTerm(t *testing.T) {
 	cs := testCommits(t, "x Preview y", "p r e v i e w scattered", "unrelated")
-	if got := hitIdx(filterCommits(cs, nil, 0, queryTerms("~prvw"))); !sameInts(got, []int{0, 1}) {
+	if got := hitIdx(filterCommits(cs, nil, 0, queryTerms("~prvw", false))); !sameInts(got, []int{0, 1}) {
 		t.Errorf("fuzzy hits = %v, want [0 1]", got)
 	}
-	if terms := queryTerms(" ~  FiX ~a "); len(terms) != 2 || terms[0] != (qterm{text: "fix"}) || terms[1] != (qterm{text: "a", fuzzy: true}) {
+	if terms := queryTerms(" ~  FiX ~a ", false); len(terms) != 2 || terms[0] != (qterm{text: "fix"}) || terms[1] != (qterm{text: "a", fuzzy: true}) {
 		t.Errorf("queryTerms = %+v", terms)
 	}
 }
 
 func TestFilterTermsAreANDed(t *testing.T) {
 	cs := testCommits(t, "fix preview scroll", "fix list", "preview colors", "scroll fix for the preview")
-	got := filterCommits(cs, nil, 0, queryTerms("  preview   fix "))
+	got := filterCommits(cs, nil, 0, queryTerms("  preview   fix ", false))
 	if !sameInts(hitIdx(got), []int{0, 3}) {
 		t.Fatalf("hits = %v, want [0 3]", hitIdx(got))
 	}
@@ -247,7 +247,7 @@ func TestFilterTermsAreANDed(t *testing.T) {
 
 func TestFilterNonASCII(t *testing.T) {
 	cs := testCommits(t, "añade el motor ANALÍTICO", "nothing here")
-	got := filterCommits(cs, nil, 0, queryTerms("analítico"))
+	got := filterCommits(cs, nil, 0, queryTerms("analítico", false))
 	if !sameInts(hitIdx(got), []int{0}) || spelled(cs[0], got[0]) != "ANALÍTICO" {
 		t.Errorf("non-ASCII term: hits=%v", hitIdx(got))
 	}
@@ -255,10 +255,10 @@ func TestFilterNonASCII(t *testing.T) {
 
 func TestFilterSubsetAndFrom(t *testing.T) {
 	cs := testCommits(t, "alpha", "beta alpha", "gamma", "alpha again")
-	if got := hitIdx(filterCommits(cs, []int{1, 2, 3}, 0, queryTerms("alpha"))); !sameInts(got, []int{1, 3}) {
+	if got := hitIdx(filterCommits(cs, []int{1, 2, 3}, 0, queryTerms("alpha", false))); !sameInts(got, []int{1, 3}) {
 		t.Errorf("among: %v, want [1 3]", got)
 	}
-	if got := hitIdx(filterCommits(cs, nil, 2, queryTerms("alpha"))); !sameInts(got, []int{3}) {
+	if got := hitIdx(filterCommits(cs, nil, 2, queryTerms("alpha", false))); !sameInts(got, []int{3}) {
 		t.Errorf("from: %v, want [3]", got)
 	}
 	if got := filterCommits(cs, nil, 0, nil); got != nil {
@@ -377,7 +377,7 @@ func TestRelDate(t *testing.T) {
 
 func TestRenderSegsHighlightsMatchedBytes(t *testing.T) {
 	c := sampleCommit(t)
-	hits := filterCommits([]commit{c}, nil, 0, queryTerms("analítico"))
+	hits := filterCommits([]commit{c}, nil, 0, queryTerms("analítico", false))
 	if len(hits) != 1 {
 		t.Fatal("expected a hit")
 	}
