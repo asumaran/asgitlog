@@ -39,6 +39,11 @@ are split by concern but everything stays in `package main`:
   occurs in one piece could still match scattered letters before it. When the
   query occurs whole, that occurrence is the match; here only the highlight changes, hits stay in log order. The same file in every
   tool of the family.
+- `text.go`: `truncate`, `padRight`, `padLeft`: fitting text, styled or not,
+  into cells. The same file in every tool of the family.
+- `listmouse.go`: `inList`, `rowUnder`, `wheelKey`: the mouse over the list.
+  The wheel goes through the same code as the arrows; a click moves the
+  cursor and never opens anything. The same file in every tool of the family.
 - `prompt.go`: the filter input, its prompt (with the tool's name only outside
   herdr's popup, where the pane's title already says it), the placeholder and
   the `(dev)` mark after the counter, on the edge over the input. The same file

@@ -35,10 +35,6 @@ func homeRel(p string) string {
 	return p
 }
 
-func truncate(s string, width int) string {
-	return ansi.Truncate(s, width, "…")
-}
-
 // ---- styles ----
 
 var (
@@ -546,7 +542,7 @@ func (m *model) listY() int { return mainY + 1 }
 
 // overList reports whether a screen cell is inside the list.
 func (m *model) overList(x, y int) bool {
-	return y >= m.listY() && y < m.listY()+m.listH() && x >= 1 && x <= m.listW()
+	return inList(x, y, m.listY(), m.listW(), m.listH())
 }
 
 func (m *model) resize() {
@@ -1120,11 +1116,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// a long history without the keyboard); anywhere else it scrolls the
 		// diff.
 		if m.mode == modeList && m.overList(msg.X, msg.Y) {
-			switch msg.Button {
-			case tea.MouseWheelUp:
-				return m, m.moveCursor(-1)
-			case tea.MouseWheelDown:
-				return m, m.moveCursor(+1)
+			if k, ok := wheelKey(msg); ok {
+				return m, m.moveCursor(m.keys.Nav.move(k, m.cursor, m.rowCount(), m.listH(), nil) - m.cursor)
 			}
 			return m, nil
 		}
@@ -1342,8 +1335,8 @@ func (m *model) handleClick(msg tea.MouseClickMsg) tea.Cmd {
 	if !m.overList(msg.X, msg.Y) {
 		return nil
 	}
-	i := m.top + msg.Y - m.listY()
-	if i >= m.rowCount() || i == m.cursor {
+	i, ok := rowUnder(msg.Y, m.listY(), m.top, m.rowCount())
+	if !ok || i == m.cursor {
 		return nil
 	}
 	m.cursor = i
