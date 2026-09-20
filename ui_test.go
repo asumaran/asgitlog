@@ -153,9 +153,10 @@ func TestGeometry(t *testing.T) {
 func TestRowsLayout(t *testing.T) {
 	m := testModel(t, 5)
 	ls := lines(m)
-	// One frame, four sections sharing their edges: summary, input (counter
-	// on the edge over it), main, help.
-	if !strings.HasPrefix(ls[0], "╭─") || !strings.HasPrefix(ls[2], "├─") || !strings.HasSuffix(ls[2], " 5/5 (dev) ─┤") ||
+	// One frame, four sections sharing their edges: summary, input, main
+	// (counter on the edge under the list), help.
+	if !strings.HasPrefix(ls[0], "╭─") || !strings.HasPrefix(ls[2], "├─") || !strings.HasSuffix(ls[2], "─ (dev) ─┤") ||
+		!strings.HasSuffix(ls[15], "─ 5/5 ─┤") ||
 		!strings.HasPrefix(ls[3], "│ asgitlog") || !strings.HasPrefix(ls[4], "├─") || !strings.HasPrefix(ls[40], "├─") ||
 		!strings.HasPrefix(ls[41], "│ type filter") || !strings.HasPrefix(ls[42], "╰─") {
 		t.Errorf("sections:\n%s", screen(m))
@@ -178,7 +179,7 @@ func TestRowsLayout(t *testing.T) {
 	if strings.Trim(ls[last], " │") != "" {
 		t.Errorf("a short list leaves the bottom of the list area blank: %q", ls[last])
 	}
-	if strings.ReplaceAll(ls[last+1], "─", "") != "├┤" || !strings.HasPrefix(ls[last+2], "│ commit ") {
+	if strings.ReplaceAll(ls[last+1], "─", "") != "├ 5/5 ┤" || !strings.HasPrefix(ls[last+2], "│ commit ") {
 		t.Errorf("the divider and the details go below the list:\n%s\n%s", ls[last+1], ls[last+2])
 	}
 	press(m, "down")
@@ -290,13 +291,13 @@ func TestResizeList(t *testing.T) {
 func TestDiffModeCycle(t *testing.T) {
 	m := testModel(t, 5)
 	m.deltaBin = "/usr/bin/delta"
-	// The edge over the details stays a plain line; the mode is flashed.
+	// The edge over the details carries the counter only; the mode is flashed.
 	top := func() string { return edges(m)[0] }
-	if strings.ReplaceAll(top(), "─", "") != "├┤" || !strings.HasSuffix(m.wantKey, "|sbs") {
+	if strings.ReplaceAll(top(), "─", "") != "├ 5/5 ┤" || !strings.HasSuffix(m.wantKey, "|sbs") {
 		t.Errorf("default (156 wide): %q key=%q", top(), m.wantKey)
 	}
 	press(m, "ctrl+t")
-	if m.prefs.diff != diffSBS || m.flash != "diff: side-by-side" || strings.ReplaceAll(top(), "─", "") != "├┤" {
+	if m.prefs.diff != diffSBS || m.flash != "diff: side-by-side" || strings.ReplaceAll(top(), "─", "") != "├ 5/5 ┤" {
 		t.Errorf("after one ctrl+t: flash=%q %q", m.flash, top())
 	}
 	press(m, "ctrl+t")
@@ -329,8 +330,11 @@ func TestFilterFlow(t *testing.T) {
 			t.Fatalf("hits out of log order at %d", i)
 		}
 	}
-	if line := lines(m)[counterY]; !strings.HasSuffix(line, "─ 12/200 (dev) ─┤") { // tests run an unstamped build
-		t.Errorf("counter on the input box: %q", line)
+	if edge := edges(m)[0]; !strings.HasSuffix(edge, "─ 12/200 ─┤") {
+		t.Errorf("counter on the edge under the list: %q", edge)
+	}
+	if line := lines(m)[counterY]; !strings.HasSuffix(line, "── (dev) ─┤") { // tests run an unstamped build
+		t.Errorf("edge over the input: %q", line)
 	}
 	press(m, "down")
 	keep := m.current().hash
@@ -457,7 +461,7 @@ func TestPreviewBoxEdges(t *testing.T) {
 	content := strings.Join(body, "\n")
 	m.Update(previewMsg{key: m.wantKey, hash: hashOf(0), render: render{content: content, files: fileLines(content)}})
 	box := edges(m)
-	if strings.ReplaceAll(box[0], "─", "") != "├┤" || !strings.HasSuffix(box[2], " 24/100 ─┤") {
+	if strings.ReplaceAll(box[0], "─", "") != "├ 3/3 ┤" || !strings.HasSuffix(box[2], " 24/100 ─┤") {
 		t.Errorf("at the top:\n%s\n%s", box[0], box[2])
 	}
 	press(m, "tab")
@@ -465,8 +469,8 @@ func TestPreviewBoxEdges(t *testing.T) {
 	if m.prevVP.YOffset() != 30 || !strings.HasPrefix(box[1], "│ src/ui.go") {
 		t.Errorf("tab should jump to the first file: offset=%d %q", m.prevVP.YOffset(), box[1])
 	}
-	if strings.ReplaceAll(box[0], "─", "") != "├┤" || !strings.HasSuffix(box[2], " 54/100 ─┤") {
-		t.Errorf("scrolled: the divider stays plain, the position goes on the bottom edge:\n%s\n%s", box[0], box[2])
+	if strings.ReplaceAll(box[0], "─", "") != "├ 3/3 ┤" || !strings.HasSuffix(box[2], " 54/100 ─┤") {
+		t.Errorf("scrolled: the divider keeps the counter, the position goes on the bottom edge:\n%s\n%s", box[0], box[2])
 	}
 	press(m, "tab", "tab")
 	if m.prevVP.YOffset() != 60 {
@@ -652,8 +656,8 @@ func TestScopeAndPickaxeInput(t *testing.T) {
 	if m.mode != modeList || m.opts.pickaxe != "" || m.logGen != 0 {
 		t.Errorf("esc cancels: mode=%v pickaxe=%q gen=%d", m.mode, m.opts.pickaxe, m.logGen)
 	}
-	if s := lines(m)[counterY]; !strings.HasSuffix(s, "─ 3/3 [-- src] (dev) ─┤") {
-		t.Errorf("scope next to the counter: %q", s)
+	if s := lines(m)[counterY]; !strings.HasSuffix(s, "── [-- src] (dev) ─┤") {
+		t.Errorf("scope on the edge over the input: %q", s)
 	}
 }
 

@@ -46,7 +46,7 @@ are split by concern but everything stays in `package main`:
   cursor and never opens anything. The same file in every tool of the family.
 - `prompt.go`: the filter input, its prompt (with the tool's name only outside
   herdr's popup, where the pane's title already says it), the placeholder and
-  the `(dev)` mark after the counter, on the edge over the input. The same file
+  the `(dev)` mark on the edge over the input. The same file
   in every tool of the family. The `/` search and the `-S` inputs keep their own prompts.
 - `helpfoot.go`: the help at the foot, the key that expands it, its height and
   its lines cut to the width. The same file in every tool of the family,
@@ -108,7 +108,7 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   `git log -S<text>` (empty text lifts it). A scope change restarts the
   stream: batches carry a generation and stale ones are dropped; `seekHash`
   lands the cursor on the same commit when it shows up again. The scope is
-  shown on the counter rule (the summary line is mostly path in the narrow
+  shown on the edge over the input (the summary line is mostly path in the narrow
   columns layout). Paths also limit the numstat and the diff of the preview.
 - **Working tree row**: when `git status --porcelain` is not empty (and HEAD
   exists, and no content search is active) the stream leads with a
@@ -130,8 +130,7 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   edge in columns) says nothing about the diff: it used to carry the diff mode
   and the scrolled-away commit, which was dropped as noise. The edge under the
   list (the divider in rows, the left part of the bottom edge in columns)
-  carries the list's position, last visible commit out of the listed ones,
-  while the list overflows (`listPos`). The main section's bottom edge carries
+  carries the matches/total counter (`counter`). The main section's bottom edge carries
   the details' `line/total`. Details have a cell of padding, list rows use
   their own 2-cell gutter.
   - The list reads TOP-DOWN in both layouts: row 0, the newest commit, is the

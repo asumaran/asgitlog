@@ -1408,7 +1408,7 @@ func (m *model) listView() string {
 	out := []string{
 		hline(w, "╭", "╮", "", ""),
 		framed(w, stInfo.Render(m.info)),
-		hline(w, "├", "┤", "", withDevMark(m.counter())),
+		hline(w, "├", "┤", "", withDevMark(m.status())),
 		framed(w, input),
 	}
 	out = append(out, m.mainLines()...)
@@ -1436,16 +1436,21 @@ func (m *model) scope() string {
 	return strings.Join(parts, "  ")
 }
 
-// counter is the matches/total count, with the scope and the loading mark.
+// counter is the matches/total count, for the edge under the list.
 func (m *model) counter() string {
-	s := stCount.Render(strconv.Itoa(m.rowCount()) + "/" + strconv.Itoa(len(m.commits)))
+	return stCount.Render(strconv.Itoa(m.rowCount()) + "/" + strconv.Itoa(len(m.commits)))
+}
+
+// status is the scope and the loading mark, for the edge over the input.
+func (m *model) status() string {
+	var parts []string
 	if scope := m.scope(); scope != "" {
-		s += " " + stScope.Render("["+truncate(scope, max(10, m.width/2))+"]")
+		parts = append(parts, stScope.Render("["+truncate(scope, max(10, m.width/2))+"]"))
 	}
 	if m.loading {
-		s += stDim.Render(" loading…")
+		parts = append(parts, stDim.Render("loading…"))
 	}
-	return s
+	return strings.Join(parts, " ")
 }
 
 // listLines are the visible rows, exactly listH lines of listW cells.
@@ -1473,16 +1478,6 @@ func (m *model) listLines() []string {
 		lines = append(lines, strings.Repeat(" ", l.width))
 	}
 	return lines
-}
-
-// listPos is the list's position for the edge under it: the last visible
-// commit out of the listed ones, empty while everything fits.
-func (m *model) listPos() string {
-	total := m.rowCount()
-	if total <= m.listH() {
-		return ""
-	}
-	return stDim.Render(strconv.Itoa(min(total, m.top+m.listH())) + "/" + strconv.Itoa(total))
 }
 
 // diffEdge is what the main section's bottom edge says about the diff: a mark
@@ -1524,13 +1519,13 @@ func (m *model) mainLines() []string {
 			}
 			out = append(out, side+list[i]+side+fit(" "+d, dw)+side)
 		}
-		return append(out, hline(lw+1, "├", "", m.listPos(), "")+hline(dw+2, "┴", "┤", "", pos))
+		return append(out, hline(lw+1, "├", "", "", m.counter())+hline(dw+2, "┴", "┤", "", pos))
 	}
 	out = append(out, hline(w, "├", "┤", "", ""))
 	for _, l := range list {
 		out = append(out, side+l+side)
 	}
-	out = append(out, hline(w, "├", "┤", m.listPos(), ""))
+	out = append(out, hline(w, "├", "┤", "", m.counter()))
 	for _, d := range details {
 		out = append(out, side+fit(" "+d, dw)+side)
 	}

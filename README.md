@@ -105,8 +105,8 @@ In the full-screen diff:
   when it opened; from a shell, the one of the current directory. Outside a
   repository it says so and exits.
 - The history is streamed, so a large repository is usable while the rest
-  loads. The counter next to the input shows `matches/total` and whatever the
-  log is scoped to.
+  loads. The counter under the list shows `matches/total`; the edge over the input
+  shows whatever the log is scoped to.
 - The selection survives layout changes, resizes and filter edits: deleting
   the query leaves you on the commit you found, with its neighbors around.
 - The commits around the selected one are rendered ahead (a few in the
