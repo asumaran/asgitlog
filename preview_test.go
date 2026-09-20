@@ -99,3 +99,38 @@ func TestRenderDiffIgnoringWhitespace(t *testing.T) {
 		t.Error("the two renders of a commit need their own key")
 	}
 }
+
+func TestRenderPreviewUsesTheDiskCache(t *testing.T) {
+	deltaBin, err := exec.LookPath("delta")
+	if err != nil {
+		t.Skip("delta not installed")
+	}
+	gitRepo(t)
+	renderCache = testCache(t)
+	t.Cleanup(func() { renderCache = nil })
+	second := bySubject(t, collectLog(t, logOpts{}), "second commit")
+	tool := diffTool{name: toolDelta, bin: deltaBin}
+	first := renderPreviewCmd(context.Background(), *second, 90, diffSingle, tool, nil)().(previewMsg)
+	if first.err != nil {
+		t.Fatal(first.err)
+	}
+	stored, ok := renderCache.get(tool, second.hash, 90, diffSingle)
+	if !ok || !strings.Contains(first.render.content, stored) {
+		t.Fatalf("the diff should be stored as rendered: ok=%v", ok)
+	}
+	// Served from the disk: the stored text is what shows, under a fresh header.
+	renderCache.put(tool, second.hash, 90, diffSingle, "FROM THE CACHE")
+	again := renderPreviewCmd(context.Background(), *second, 90, diffSingle, tool, nil)().(previewMsg)
+	if again.err != nil || !strings.Contains(again.render.content, "FROM THE CACHE") || !strings.Contains(again.render.content, "second commit") {
+		t.Errorf("second render: err=%v\n%s", again.err, again.render.content)
+	}
+}
+
+func TestRenderIDCoversThePaths(t *testing.T) {
+	if renderID("", []string{"src"}) != "" {
+		t.Errorf("the working tree row has no id: it is never stored")
+	}
+	if renderID("abc", nil) == renderID("abc", []string{"src"}) {
+		t.Errorf("a log limited to paths must not share the renders of the whole commit")
+	}
+}

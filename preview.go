@@ -8,9 +8,7 @@ package main
 // cached per (commit, width, diff mode).
 
 import (
-	"bytes"
 	"context"
-	"io"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -53,17 +51,6 @@ type previewMsg struct {
 	next tea.Cmd
 }
 
-// renderCache keeps the rendered diffs between runs; nil (tests) keeps none.
-var renderCache *diskCache
-
-// diffTool is how the diff is made: what renders it (delta or hunk, or plain
-// git when bin is empty) and whether git leaves the changes in whitespace out
-// of the patch (its -w, what GitHub's "Hide whitespace" does).
-type diffTool struct {
-	name, bin string
-	ignoreWS  bool
-}
-
 // previewKey identifies a render. mode is the effective diff mode (auto is
 // resolved by the caller), so auto and an explicit mode share their renders.
 func previewKey(hash string, width int, tool diffTool, mode string) string {
@@ -99,7 +86,8 @@ func renderPreviewCmd(ctx context.Context, c commit, width int, mode string, too
 			}
 			return previewMsg{key: key, hash: c.hash, detail: d, render: render{content, fileLines(content), partial}}
 		}
-		if diff, ok := renderCache.get(tool, c.hash, width, mode, paths); ok {
+		id := renderID(c.hash, paths)
+		if diff, ok := renderCache.get(tool, id, width, mode); ok {
 			return rendered(diff, false)
 		}
 		diff, err := renderDiff(ctx, &c, width, mode == diffSBS, tool, paths, func(diff string) {
@@ -114,7 +102,7 @@ func renderPreviewCmd(ctx context.Context, c commit, width int, mode string, too
 			return fail(err)
 		}
 		if tool.bin != "" { // plain git is as fast as reading it back
-			renderCache.put(tool, c.hash, width, mode, paths, diff)
+			renderCache.put(tool, id, width, mode, diff)
 		}
 		return rendered(diff, false)
 	}
@@ -124,92 +112,33 @@ func renderPreviewCmd(ctx context.Context, c commit, width int, mode string, too
 	}
 }
 
-// renderDiff pipes the commit's patch through delta. delta ignores COLUMNS
-// and falls back to 80 columns when stdout is not a tty, so the width is
-// always explicit. Without delta the patch falls back to git's own colors.
-func renderDiff(ctx context.Context, c *commit, width int, sbs bool, tool diffTool, paths []string, early func(string)) (string, error) {
-	deltaBin := tool.bin
-	color := "--no-color"
-	if deltaBin == "" {
-		color = "--color=always"
+// renderID addresses a commit's render in the disk cache: a commit never
+// changes, so its hash (and what the log is limited to) says it all. The
+// working tree row has no hash and is never stored.
+func renderID(hash string, paths []string) string {
+	if hash == "" {
+		return ""
 	}
+	return strings.Join(append([]string{hash}, paths...), "\x00")
+}
+
+// renderDiff draws the commit's patch with tool (see renderPatch).
+func renderDiff(ctx context.Context, c *commit, width int, sbs bool, tool diffTool, paths []string, early func(string)) (string, error) {
 	var args []string
 	if c.wt {
-		args = []string{"-c", "core.quotepath=false", "diff", "HEAD", color}
+		args = []string{"-c", "core.quotepath=false", "diff", "HEAD", tool.colorArg()}
 	} else {
-		args = append(append([]string{}, showArgs...), color, "--format=", c.hash)
+		args = append(append([]string{}, showArgs...), tool.colorArg(), "--format=", c.hash)
 	}
 	if tool.ignoreWS {
 		args = append(args, "-w")
 	}
-	git := exec.CommandContext(ctx, "git", append(args, pathArgs(paths)...)...)
-	if tool.name == toolHunk {
-		patch, err := limitedOutput(git)
-		if err != nil {
-			return "", err
-		}
-		return renderHunk(ctx, tool.bin, []byte(patch), width, sbs, early)
-	}
-	if deltaBin == "" {
-		out, err := limitedOutput(git)
-		return strings.ReplaceAll(out, "\t", "    "), err
-	}
-	dargs := []string{"--width=" + strconv.Itoa(width), "--paging=never"}
-	if sbs {
-		dargs = append(dargs, "--side-by-side")
-	}
-	delta := exec.CommandContext(ctx, deltaBin, dargs...)
-	pipe, err := git.StdoutPipe()
+	patch, err := limitedOutput(exec.CommandContext(ctx, "git", append(args, pathArgs(paths)...)...), false)
 	if err != nil {
 		return "", err
 	}
-	delta.Stdin = pipe
-	if err := git.Start(); err != nil {
-		return "", err
-	}
-	out, err := limitedOutput(delta)
-	_ = git.Wait() // fails with SIGPIPE when the output was capped; delta's result is what counts
-	return out, err
+	return renderPatch(ctx, tool, []byte(patch), width, sbs, early)
 }
-
-// limitedOutput runs cmd and returns at most maxDiffBytes of its stdout, cut
-// at a line boundary with a note when the cap was hit.
-func limitedOutput(cmd *exec.Cmd) (string, error) {
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", err
-	}
-	if err := cmd.Start(); err != nil {
-		return "", err
-	}
-	data, _ := io.ReadAll(io.LimitReader(stdout, maxDiffBytes+1))
-	capped := len(data) > maxDiffBytes
-	if capped {
-		_ = cmd.Process.Kill()
-		data = data[:maxDiffBytes]
-		if i := bytes.LastIndexByte(data, '\n'); i >= 0 {
-			data = data[:i]
-		}
-	}
-	err = cmd.Wait()
-	out := strings.Trim(string(data), "\n") // delta opens with a blank line
-	if capped {
-		return out + "\n\n" + stDim.Render("(diff truncated at "+strconv.Itoa(maxDiffBytes>>20)+" MiB)"), nil
-	}
-	if err != nil && out == "" {
-		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return "", &renderError{firstLine(msg)}
-		}
-		return "", err
-	}
-	return out, nil
-}
-
-type renderError struct{ msg string }
-
-func (e *renderError) Error() string { return e.msg }
 
 // hunkFileLine is hunk's file header: the path and the counts at the ends of
 // an otherwise blank line.
@@ -364,13 +293,6 @@ func statLine(d detail) string {
 	}
 	return stLabel.Render(plural(len(d.files), "file")+" changed") + "  " +
 		stAdded.Render("+"+strconv.Itoa(d.added)) + " " + stDeleted.Render("-"+strconv.Itoa(d.deleted))
-}
-
-func plural(n int, noun string) string {
-	if n == 1 {
-		return "1 " + noun
-	}
-	return strconv.Itoa(n) + " " + noun + "s"
 }
 
 // wrapIndent word-wraps s to width and indents every resulting line.

@@ -10,11 +10,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"slices"
 	"strings"
 
@@ -53,10 +51,9 @@ func main() {
 	}
 
 	enterPaneCwd()
-	deltaBin, _ := exec.LookPath("delta")
-	m := newModel(loadPrefs(), deltaBin, opts)
-	m.hunkBin, _ = exec.LookPath("hunk")
-	renderCache = openDiskCache()
+	m := newModel(loadPrefs(), toolBin("asgitlog", "delta"), opts)
+	m.hunkBin = toolBin("asgitlog", "hunk")
+	renderCache = openDiskCache("asgitlog")
 
 	if !insideWorkTree() {
 		cwd, _ := os.Getwd()
@@ -82,29 +79,6 @@ func main() {
 	}
 	if m.mode == modeFatal {
 		os.Exit(1)
-	}
-}
-
-// enterPaneCwd moves to the directory of the pane that was focused when the
-// popup opened. herdr starts plugin panes in the plugin's own directory (the
-// manifest's "./asgitlog" is resolved against it, so the pane cannot simply be
-// opened with another cwd) and describes the invocation, focused pane
-// included, in HERDR_PLUGIN_CONTEXT_JSON.
-func enterPaneCwd() {
-	if os.Getenv("HERDR_PLUGIN_ENTRYPOINT_ID") == "" {
-		return
-	}
-	var ctx struct {
-		FocusedPaneCwd string `json:"focused_pane_cwd"`
-		WorkspaceCwd   string `json:"workspace_cwd"`
-	}
-	if json.Unmarshal([]byte(os.Getenv("HERDR_PLUGIN_CONTEXT_JSON")), &ctx) != nil {
-		return
-	}
-	for _, dir := range []string{ctx.FocusedPaneCwd, ctx.WorkspaceCwd} {
-		if dir != "" && os.Chdir(dir) == nil {
-			return
-		}
 	}
 }
 

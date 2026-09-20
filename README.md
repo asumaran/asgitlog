@@ -141,7 +141,8 @@ In the full-screen diff:
   `diff`, `renderer`, `whitespace`, `split-rows`, `split-columns`), shared by the popup and the shell
   command.
 - `ASGITLOG_POPUP_WIDTH` / `ASGITLOG_POPUP_HEIGHT` (e.g. `95%`) override the
-  popup size from the manifest (85% x 90%). `ASGITLOG_CLIPBOARD` and
+  popup size from the manifest (85% x 90%). `ASGITLOG_DELTA` and `ASGITLOG_HUNK` replace the
+  renderers' binaries (`none` turns one off). `ASGITLOG_CLIPBOARD` and
   `ASGITLOG_OPENER` replace the clipboard command (`pbcopy` on macOS; `wl-copy`,
   `xclip` or `xsel` on Linux) and the browser opener (`xdg-open` on Linux).
 

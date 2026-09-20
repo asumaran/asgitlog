@@ -297,16 +297,16 @@ func TestDiffModeCycle(t *testing.T) {
 		t.Errorf("default (156 wide): %q key=%q", top(), m.wantKey)
 	}
 	press(m, "ctrl+t")
-	if m.prefs.diff != diffSBS || m.flash != "diff: side-by-side" || strings.ReplaceAll(top(), "─", "") != "├ 5/5 ┤" {
-		t.Errorf("after one ctrl+t: flash=%q %q", m.flash, top())
+	if m.prefs.diff != diffSBS || m.flash.text != "diff: side-by-side" || strings.ReplaceAll(top(), "─", "") != "├ 5/5 ┤" {
+		t.Errorf("after one ctrl+t: flash=%q %q", m.flash.text, top())
 	}
 	press(m, "ctrl+t")
-	if pref("diff") != diffSingle || m.flash != "diff: single column" || !strings.HasSuffix(m.wantKey, "|single") {
-		t.Errorf("after two: flash=%q key=%q", m.flash, m.wantKey)
+	if pref("diff") != diffSingle || m.flash.text != "diff: single column" || !strings.HasSuffix(m.wantKey, "|single") {
+		t.Errorf("after two: flash=%q key=%q", m.flash.text, m.wantKey)
 	}
 	press(m, "ctrl+t")
-	if pref("diff") != diffAuto || m.flash != "diff: auto: side-by-side" {
-		t.Errorf("third ctrl+t should be back to auto, got %q flash=%q", pref("diff"), m.flash)
+	if pref("diff") != diffAuto || m.flash.text != "diff: auto: side-by-side" {
+		t.Errorf("third ctrl+t should be back to auto, got %q flash=%q", pref("diff"), m.flash.text)
 	}
 	// Auto follows the preview width.
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
@@ -618,12 +618,12 @@ func TestCopyAndBrowse(t *testing.T) {
 	if !strings.Contains(screen(m), "copied "+hashOf(0)) {
 		t.Errorf("flash missing:\n%s", lines(m)[len(lines(m))-1])
 	}
-	m.Update(clearFlashMsg(m.flashSeq - 1))
-	if m.flash == "" {
+	m.Update(clearFlashMsg(m.flash.seq - 1))
+	if m.flash.text == "" {
 		t.Error("an older timer must not clear a newer message")
 	}
-	m.Update(clearFlashMsg(m.flashSeq))
-	if m.flash != "" || !strings.Contains(screen(m), "full diff") {
+	m.Update(clearFlashMsg(m.flash.seq))
+	if m.flash.text != "" || !strings.Contains(screen(m), "full diff") {
 		t.Error("the help line should come back")
 	}
 
@@ -752,15 +752,15 @@ func TestBackToTheNewestCommit(t *testing.T) {
 func TestToggleTool(t *testing.T) {
 	m := testModel(t, 5)
 	press(m, "ctrl+r")
-	if m.flash != "hunk not found" || m.tool().name != toolDelta || pref("renderer") != "" {
-		t.Errorf("without hunk: flash=%q tool=%q pref=%q", m.flash, m.tool().name, pref("renderer"))
+	if m.flash.text != "hunk not found" || m.tool().name != toolDelta || pref("renderer") != "" {
+		t.Errorf("without hunk: flash=%q tool=%q pref=%q", m.flash.text, m.tool().name, pref("renderer"))
 	}
 	m.hunkBin = "/usr/bin/hunk"
 	delta := m.wantKey
 	press(m, "ctrl+r")
-	if m.tool() != (diffTool{name: toolHunk, bin: "/usr/bin/hunk"}) || pref("renderer") != toolHunk || m.flash != "diffs by hunk" ||
+	if m.tool() != (diffTool{name: toolHunk, bin: "/usr/bin/hunk"}) || pref("renderer") != toolHunk || m.flash.text != "diffs by hunk" ||
 		m.wantKey == delta || !strings.Contains(m.wantKey, "|hunk|") {
-		t.Errorf("ctrl+r: tool=%+v pref=%q flash=%q key=%q", m.tool(), pref("renderer"), m.flash, m.wantKey)
+		t.Errorf("ctrl+r: tool=%+v pref=%q flash=%q key=%q", m.tool(), pref("renderer"), m.flash.text, m.wantKey)
 	}
 	// Renders are cached per tool, so going back needs no new render.
 	press(m, "enter", "ctrl+r", "esc")

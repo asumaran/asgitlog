@@ -1,9 +1,14 @@
 package main
 
-// The rendered diffs, kept on disk between runs. A commit never changes, so
-// what a tool drew for it at a width and in a mode stays good for as long as
-// the tool and its configuration do; the popup is opened over and over on the
-// same recent commits, and hunk takes its time.
+// The rendered diffs, kept on disk between runs. delta and hunk take their
+// time (hunk paints the diff first and the syntax highlighting a few hundred
+// milliseconds later), and a popup is opened over and over on the same
+// things. A render is addressed by an id the caller gives it and that can
+// never go stale: a commit's hash, or a hash of the patch itself for what is
+// still being edited. Whatever else changes the output (the tool, its binary,
+// its configuration, the width, the mode) is part of the address too.
+//
+// This file is the same in every tool of the family that renders diffs.
 
 import (
 	"bytes"
@@ -22,12 +27,12 @@ import (
 )
 
 const (
-	cacheFormat   = "1"       // bump when what is stored changes
+	cacheFormat   = "2"       // bump when what is stored changes
 	cacheMaxBytes = 128 << 20 // pruned down to 3/4 of this at startup
 )
 
 // diskCache stores gzipped renders under dir, one file per key. A nil cache
-// (tests, ASGITLOG_NO_CACHE) stores nothing.
+// (tests, <TOOL>_NO_CACHE) stores nothing.
 type diskCache struct {
 	dir string
 
@@ -35,8 +40,11 @@ type diskCache struct {
 	tools map[string]string // tool name → fingerprint of its binary and configuration
 }
 
-// cacheDir is ${XDG_CACHE_HOME:-~/.cache}/asgitlog/renders.
-func cacheDir() string {
+// renderCache is opened by main(); nil keeps nothing.
+var renderCache *diskCache
+
+// cacheDir is ${XDG_CACHE_HOME:-~/.cache}/<tool>/renders.
+func cacheDir(tool string) string {
 	base := os.Getenv("XDG_CACHE_HOME")
 	if base == "" {
 		home, err := os.UserHomeDir()
@@ -45,12 +53,14 @@ func cacheDir() string {
 		}
 		base = filepath.Join(home, ".cache")
 	}
-	return filepath.Join(base, "asgitlog", "renders")
+	return filepath.Join(base, tool, "renders")
 }
 
-func openDiskCache() *diskCache {
-	dir := cacheDir()
-	if dir == "" || os.Getenv("ASGITLOG_NO_CACHE") != "" {
+// openDiskCache is the cache of the tool called name; <TOOL>_NO_CACHE turns it
+// off.
+func openDiskCache(name string) *diskCache {
+	dir := cacheDir(name)
+	if dir == "" || os.Getenv(strings.ToUpper(name)+"_NO_CACHE") != "" {
 		return nil
 	}
 	return &diskCache{dir: dir}
@@ -88,24 +98,31 @@ func (c *diskCache) fingerprint(tool diffTool) string {
 	return tool.name + "\x00" + fileMark(tool.bin) + "\x00" + c.tools[tool.name]
 }
 
-func (c *diskCache) path(tool diffTool, hash string, width int, mode string, paths []string) string {
+// patchID is the id of a render made from patch: an edited file gives another
+// patch, so its old renders are simply never asked for again.
+func patchID(patch []byte) string {
+	sum := sha256.Sum256(patch)
+	return hex.EncodeToString(sum[:])
+}
+
+func (c *diskCache) path(tool diffTool, id string, width int, mode string) string {
 	if tool.ignoreWS {
 		mode += "-w"
 	}
-	sum := sha256.Sum256([]byte(strings.Join(append([]string{
-		cacheFormat, c.fingerprint(tool), hash, strconv.Itoa(width), mode,
-	}, paths...), "\x00")))
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		cacheFormat, c.fingerprint(tool), id, strconv.Itoa(width), mode,
+	}, "\x00")))
 	name := hex.EncodeToString(sum[:])
 	return filepath.Join(c.dir, name[:2], name[2:]+".gz")
 }
 
 // get returns a stored render. A hit is touched, so pruning drops what has
 // not been looked at for the longest.
-func (c *diskCache) get(tool diffTool, hash string, width int, mode string, paths []string) (string, bool) {
-	if c == nil || hash == "" {
+func (c *diskCache) get(tool diffTool, id string, width int, mode string) (string, bool) {
+	if c == nil || id == "" {
 		return "", false
 	}
-	p := c.path(tool, hash, width, mode, paths)
+	p := c.path(tool, id, width, mode)
 	f, err := os.Open(p)
 	if err != nil {
 		return "", false
@@ -124,13 +141,13 @@ func (c *diskCache) get(tool diffTool, hash string, width int, mode string, path
 	return string(out), true
 }
 
-// put stores a render; the working tree (hash "") is never stored. Failures
-// only cost the next run a render.
-func (c *diskCache) put(tool diffTool, hash string, width int, mode string, paths []string, diff string) {
-	if c == nil || hash == "" {
+// put stores a render; one without an id (asgitlog's working tree row) is
+// never stored. Failures only cost the next run a render.
+func (c *diskCache) put(tool diffTool, id string, width int, mode, diff string) {
+	if c == nil || id == "" {
 		return
 	}
-	p := c.path(tool, hash, width, mode, paths)
+	p := c.path(tool, id, width, mode)
 	if os.MkdirAll(filepath.Dir(p), 0o755) != nil {
 		return
 	}

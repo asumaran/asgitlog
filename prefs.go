@@ -16,15 +16,6 @@ import (
 const (
 	layoutRows    = "rows"    // preview at the bottom, wide list
 	layoutColumns = "columns" // preview on the right, compact list
-	diffAuto      = "auto"    // side by side when the preview is wide enough
-	diffSBS       = "sbs"
-	diffSingle    = "single"
-	toolDelta     = "delta" // what renders the diff; plain git without delta
-	toolHunk      = "hunk"
-
-	// autoSBSMinW is the preview width from which the auto mode goes side by
-	// side (the threshold the dotfiles' delta-pager wrapper uses).
-	autoSBSMinW = 120
 
 	splitMin, splitMax, splitStep = 30, 85, 5
 )
@@ -124,26 +115,4 @@ func loadPrefs() prefs {
 	}
 	p.ignoreWS = readPref("whitespace") == "ignore"
 	return p
-}
-
-// effectiveDiff resolves the auto mode for a preview of the given width.
-func effectiveDiff(mode string, width int) string {
-	if mode != diffAuto {
-		return mode
-	}
-	if width >= autoSBSMinW {
-		return diffSBS
-	}
-	return diffSingle
-}
-
-func diffLabel(mode string, width int) string {
-	label := "side-by-side"
-	if effectiveDiff(mode, width) == diffSingle {
-		label = "single column"
-	}
-	if mode == diffAuto {
-		return "auto: " + label
-	}
-	return label
 }

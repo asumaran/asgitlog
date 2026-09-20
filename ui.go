@@ -10,10 +10,6 @@ package main
 
 import (
 	"context"
-	"errors"
-	"os"
-	"os/exec"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -39,7 +35,6 @@ var (
 	stInfo   = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
 	stScope  = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
 	stCount  = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	stFlash  = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 	stFound  = lipgloss.NewStyle().Reverse(true)
 
 	// list columns and preview header, after git's own palette
@@ -201,11 +196,6 @@ const (
 
 type repoInfoMsg repoInfo
 
-// flashMsg shows a short-lived status in place of the help line; clearFlashMsg
-// removes it unless a newer one replaced it.
-type flashMsg string
-type clearFlashMsg int
-
 type model struct {
 	// data
 	opts     logOpts
@@ -228,8 +218,7 @@ type model struct {
 	// ui
 	mode     uiMode
 	fatal    string
-	flash    string
-	flashSeq int
+	flash    flash // a short-lived status in place of the help line (flash.go)
 	prefs    prefs
 	cursor   int // index into the visible rows; 0 is the newest commit
 	top      int // first row of the visible window
@@ -886,10 +875,7 @@ func (m *model) toggleLayout() tea.Cmd {
 // tool is what renders the diffs: hunk when it was asked for and is installed,
 // else delta (or plain git, without delta).
 func (m *model) tool() diffTool {
-	if m.prefs.tool == toolHunk && m.hunkBin != "" {
-		return diffTool{toolHunk, m.hunkBin, m.prefs.ignoreWS}
-	}
-	return diffTool{toolDelta, m.deltaBin, m.prefs.ignoreWS}
+	return pickTool(m.prefs.tool, m.deltaBin, m.hunkBin, m.prefs.ignoreWS)
 }
 
 // toggleWhitespace turns git's -w on and off for every diff.
@@ -908,11 +894,7 @@ func (m *model) toggleTool() tea.Cmd {
 	if m.hunkBin == "" {
 		return m.setFlash("hunk not found")
 	}
-	if m.prefs.tool == toolHunk {
-		m.prefs.tool = toolDelta
-	} else {
-		m.prefs.tool = toolHunk
-	}
+	m.prefs.tool = nextTool(m.prefs.tool)
 	savePref("renderer", m.prefs.tool)
 	return tea.Batch(m.updatePreview(), m.setFlash("diffs by "+m.prefs.tool))
 }
@@ -956,53 +938,14 @@ func (m *model) resizeList(grow bool) tea.Cmd {
 	return m.updatePreview()
 }
 
-func (m *model) setFlash(s string) tea.Cmd {
-	m.flash = s
-	m.flashSeq++
-	seq := m.flashSeq
-	return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return clearFlashMsg(seq) })
-}
+func (m *model) setFlash(s string) tea.Cmd { return m.flash.set(s) }
 
 func (m *model) copyHash() tea.Cmd {
 	c := m.current()
 	if c == nil || c.wt {
 		return m.setFlash("nothing to copy")
 	}
-	hash := c.hash
-	return func() tea.Msg {
-		if err := copyToClipboard(hash); err != nil {
-			return flashMsg("copy failed: " + err.Error())
-		}
-		return flashMsg("copied " + hash)
-	}
-}
-
-// copyToClipboard feeds s to ASGITLOG_CLIPBOARD (the pty driver points it at
-// a logging stub), to pbcopy on macOS, and elsewhere to the first of wl-copy,
-// xclip and xsel that is installed.
-func copyToClipboard(s string) error {
-	argv := clipboardCmd()
-	if len(argv) == 0 {
-		return errors.New("no clipboard command found (wl-copy, xclip or xsel)")
-	}
-	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Stdin = strings.NewReader(s)
-	return cmd.Run()
-}
-
-func clipboardCmd() []string {
-	if bin := os.Getenv("ASGITLOG_CLIPBOARD"); bin != "" {
-		return []string{bin}
-	}
-	if runtime.GOOS == "darwin" {
-		return []string{"pbcopy"}
-	}
-	for _, argv := range [][]string{{"wl-copy"}, {"xclip", "-selection", "clipboard"}, {"xsel", "--clipboard", "--input"}} {
-		if _, err := exec.LookPath(argv[0]); err == nil {
-			return argv
-		}
-	}
-	return nil
+	return copyCmd("asgitlog", "", c.hash)
 }
 
 func (m *model) browse() tea.Cmd {
@@ -1015,37 +958,9 @@ func (m *model) browse() tea.Cmd {
 	}
 	url := commitURL(m.webURL, c.hash)
 	return func() tea.Msg {
-		openURL(url)
+		openURL("asgitlog", url)
 		return flashMsg("opened " + url)
 	}
-}
-
-// openURL opens a page in the browser. ASGITLOG_OPENER, when set, is used
-// as-is. Otherwise, when Google Chrome is running with a window, the tab is
-// created in Chrome's front window so it lands in the profile the user last
-// focused: plain `open` lets Chrome pick its own "last used" profile, which
-// routinely disagrees with the window you were just looking at. Anything else
-// falls back to `open`. Outside macOS it is xdg-open.
-func openURL(url string) {
-	if b := os.Getenv("ASGITLOG_OPENER"); b != "" {
-		_ = exec.Command(b, url).Run()
-		return
-	}
-	if runtime.GOOS != "darwin" {
-		_ = exec.Command("xdg-open", url).Run()
-		return
-	}
-	esc := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(url)
-	script := `tell application "Google Chrome"
-	if not running then error "not running"
-	if (count of windows) = 0 then error "no windows"
-	tell front window to make new tab with properties {URL:"` + esc + `"}
-	activate
-end tell`
-	if exec.Command("osascript", "-e", script).Run() == nil {
-		return
-	}
-	_ = exec.Command("open", url).Run()
 }
 
 // ---- bubbletea ----
@@ -1096,9 +1011,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.setFlash(string(msg))
 
 	case clearFlashMsg:
-		if int(msg) == m.flashSeq {
-			m.flash = ""
-		}
+		m.flash.clear(msg)
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -1356,45 +1269,6 @@ func (m *model) View() tea.View {
 	return v
 }
 
-// hline draws a horizontal border w cells wide between the corners l and r
-// (either may be empty), with optional (already styled) texts set into it
-// near each end.
-func hline(w int, l, r, left, right string) string {
-	inner := max(0, w-ansi.StringWidth(l)-ansi.StringWidth(r))
-	if left != "" {
-		left = " " + left + " "
-	}
-	if right != "" {
-		right = " " + right + " "
-	}
-	if 2+ansi.StringWidth(left)+ansi.StringWidth(right) > inner {
-		right = ""
-	}
-	if 1+ansi.StringWidth(left) > inner {
-		left = ansi.Truncate(left, max(0, inner-1), "")
-	}
-	fill := inner - ansi.StringWidth(left) - ansi.StringWidth(right)
-	lead := min(1, fill)
-	tail := 0
-	if right != "" {
-		tail = min(1, fill-lead)
-	}
-	return stDim.Render(l+strings.Repeat("─", lead)) + left +
-		stDim.Render(strings.Repeat("─", fill-lead-tail)) + right + stDim.Render(strings.Repeat("─", tail)+r)
-}
-
-// fit truncates or pads s to exactly w cells.
-func fit(s string, w int) string {
-	s = ansi.Truncate(s, w, "")
-	return s + strings.Repeat(" ", max(0, w-ansi.StringWidth(s)))
-}
-
-// framed sets a line, with a cell of padding, between the frame's sides.
-func framed(w int, l string) string {
-	side := stDim.Render("│")
-	return side + fit(" "+l, w-2) + side
-}
-
 // listView stacks the four sections in one frame: repo summary, filter input
 // (the edge over it carries the matches/total counter and the log's scope),
 // the main section and the help. Neighbours share an edge, so no line is spent
@@ -1480,30 +1354,13 @@ func (m *model) listLines() []string {
 	return lines
 }
 
-// diffEdge is what the main section's bottom edge says about the diff: a mark
-// while git's -w is on, and the scroll position.
-func diffEdge(ignoreWS bool, pos string) string {
-	if !ignoreWS {
-		return pos
-	}
-	mark := stScope.Render("[-w]")
-	if pos == "" {
-		return mark
-	}
-	return mark + stDim.Render(" ─ ") + pos
-}
-
 // mainLines is the list and the commit details between the edges shared with
 // the filter input and the help, split by a divider: horizontal in the rows
 // layout, vertical in the columns layout. The edge over the details is a plain
 // line; the bottom edge carries the scroll position.
 func (m *model) mainLines() []string {
 	w, side := m.width, stDim.Render("│")
-	pos := ""
-	if total := m.prevVP.TotalLineCount(); total > m.prevVP.Height() {
-		pos = stDim.Render(strconv.Itoa(min(total, m.prevVP.YOffset()+m.prevVP.Height())) + "/" + strconv.Itoa(total))
-	}
-	pos = diffEdge(m.prefs.ignoreWS, pos)
+	pos := diffEdge(m.prefs.ignoreWS, scrollPos(&m.prevVP))
 	list := m.listLines()
 	details := strings.Split(m.prevVP.View(), "\n")
 	dw := m.detailsW()
@@ -1539,8 +1396,8 @@ func (m *model) mainLines() []string {
 // past its width when the ellipsis does not fit.
 func (m *model) footLines(keys help.KeyMap) []string {
 	lines := helpLines(m.help, keys, m.width-4, m.footH())
-	if m.flash != "" {
-		lines[len(lines)-1] = truncate(stFlash.Render(m.flash), max(0, m.width-4))
+	if m.flash.text != "" {
+		lines[len(lines)-1] = m.flash.view(m.width - 4)
 	}
 	return lines
 }

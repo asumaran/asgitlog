@@ -18,25 +18,6 @@ import (
 	"time"
 )
 
-func runGit(ctx context.Context, args ...string) (string, error) {
-	var stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return "", errors.New(msg)
-		}
-		return "", err
-	}
-	return strings.TrimRight(string(out), "\n"), nil
-}
-
-func insideWorkTree() bool {
-	out, err := runGit(context.Background(), "rev-parse", "--is-inside-work-tree")
-	return err == nil && out == "true"
-}
-
 // ---- repo summary ----
 
 // repoInfo is the one-line repo summary of the head: repo path, branch (or

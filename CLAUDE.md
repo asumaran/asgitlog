@@ -68,7 +68,9 @@ are split by concern but everything stays in `package main`:
   needs to change them here; the maintainer ports the change. Tests of what
   asgitlog does with the render live in `preview_test.go`.
 - `prefs.go`: persisted layout, diff mode and split sizes.
-- `cache.go`: the rendered diffs kept on disk between runs.
+- `rendercache.go`: the rendered diffs kept on disk between runs, and
+  `difftool.go`: the renderers (`diffTool`, `toolBin`, `pickTool`,
+  `renderPatch`). Both are the same files asgotochanged ships.
 - `ui.go`: the bubbletea model/Update/View, modes, geometry, pooled
   preview rendering with prefetch, full view and its search, actions, mouse,
   styles.
@@ -119,7 +121,7 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
 - **Layout is computed at render time** from structs, so a resize or a layout
   change never re-runs git and the cursor trivially stays on the same commit.
   Only the visible window of rows is rendered. The screen is ONE FRAME of
-  four sections (`listView`, built with `hline`/`framed`/`fit`, all lines
+  four sections (`listView`, built with `hline`/`framed`/`fit` from the shared `border.go`, all lines
   exactly the terminal width) that share their edges (`├─┤`), so no line goes
   to a border of their own (four separate boxes were tried first; the doubled
   borders read as gaps and cost three lines): the repo summary; the filter
@@ -238,7 +240,7 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   commit that never kept up with someone stepping through the log. Failed
   renders are remembered (`failed`) and shown, not retried, or the prefetch
   would loop. Nothing renders before the first `WindowSizeMsg`.
-- **Disk cache of the rendered diffs** (`cache.go`, `renderCache`): a commit
+- **Disk cache of the rendered diffs** (`rendercache.go`, `renderCache`; the id is `renderID`: the hash and the paths): a commit
   never changes, so the diff a tool drew is stored gzipped under
   `${XDG_CACHE_HOME:-~/.cache}/asgitlog/renders/`, keyed by a hash of (format
   version, tool fingerprint, commit, width, effective mode, paths). Only the
@@ -260,7 +262,9 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
 - **Actions** are read-only: `ctrl+y` copies the full hash (`pbcopy` on macOS, the first of `wl-copy`/`xclip`/`xsel` on Linux, or
   `ASGITLOG_CLIPBOARD`), `ctrl+o` opens the commit on the remote's web page
   (`webURL`/`commitURL`: GitHub, GitLab, Bitbucket shapes; Chrome front-window
-  AppleScript like asgotopr, or `ASGITLOG_OPENER`) and stays open. Results show
+  AppleScript like asgotopr, or `ASGITLOG_OPENER`) and stays open. Both go
+  through files shared with the family: `clipboard.go`, `openurl.go`, and
+  `flash.go` for the confirmation. Results show
   as a 2-second flash in place of the help line.
 - **Help** is bubbles' `help` component and nothing else: the bottom line is
   its short view, and `?` toggles `help.ShowAll`, which expands it IN PLACE
