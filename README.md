@@ -135,7 +135,9 @@ In the full-screen diff:
 - The working tree row previews `git diff HEAD` and lists untracked files.
 - `ctrl+o` builds the URL from the `origin` remote (or the upstream's remote)
   and knows the GitHub, GitLab and Bitbucket commit paths.
-- Settings live in the state directory herdr gives the plugin `${XDG_STATE_HOME:-~/.local/state}/asgitlog/` (`layout`,
+- Settings live in the state directory herdr gives the plugin (on its own it works out the same one,
+  `${XDG_STATE_HOME:-~/.local/state}/herdr/plugins/asumaran.asgitlog/`; the ones from
+  `${XDG_STATE_HOME:-~/.local/state}/asgitlog/` are copied over once) (`layout`,
   `diff`, `renderer`, `whitespace`, `split-rows`, `split-columns`), shared by the popup and the shell
   command.
 - `ASGITLOG_POPUP_WIDTH` / `ASGITLOG_POPUP_HEIGHT` (e.g. `95%`) override the

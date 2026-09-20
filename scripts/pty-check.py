@@ -4,7 +4,7 @@
 Spawns the binary on a pty inside a throwaway git repository, answers the
 terminal queries bubbletea sends (OSC 10/11, CSI 6n, DA1), replays keystrokes,
 SGR mouse reports and resizes, and asserts on frames rendered with pyte. The
-settings and the render cache go to a sandboxed XDG_STATE_HOME/XDG_CACHE_HOME
+settings and the render cache go to a sandboxed state dir and XDG_CACHE_HOME
 and the clipboard/browser to logging stubs, so nothing real is touched.
 
 Usage: scripts/pty-check.py ./asgitlog   (needs python3 + pyte and git; delta and hunk are
@@ -39,7 +39,7 @@ def write(name, text):
 def file_txt(i):
     return "".join("line %02d of revision %02d\n" % (n, i if n % 10 == i % 10 else 0) for n in range(80))
 
-os.makedirs(REPO); os.makedirs(STATE)
+os.makedirs(REPO); os.makedirs(os.path.join(STATE, "asgitlog"))
 git("init", "-q", "-b", "main")
 git("remote", "add", "origin", "git@github.com:acme/widgets.git")
 for i in range(LINEAR):
@@ -102,6 +102,7 @@ class Term:
                    XDG_CACHE_HOME=CACHE, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null",
                    ASGITLOG_CLIPBOARD=STUB, ASGITLOG_OPENER=STUB)
         for k in [k for k in env if k.startswith("HERDR_")]: env.pop(k)
+        env["HERDR_PLUGIN_STATE_DIR"] = os.path.join(STATE, "asgitlog")   # where herdr would put the settings
         env.update(extra_env or {})
         self.master, slave = pty.openpty()
         self.resize(rows, cols, signal_proc=False)

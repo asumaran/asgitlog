@@ -38,7 +38,12 @@ type prefs struct {
 	ignoreWS     bool // git's -w: changes in whitespace are left out of the diffs
 }
 
-func prefsDir() string {
+// prefsDir is where the settings live: the state directory every tool of the
+// family uses (see statedir.go).
+func prefsDir() string { return stateDirFor("asgitlog") }
+
+// legacyPrefsDir is where they lived before asgitlog shared that directory.
+func legacyPrefsDir() string {
 	base := os.Getenv("XDG_STATE_HOME")
 	if base == "" {
 		h, err := os.UserHomeDir()
@@ -48,6 +53,30 @@ func prefsDir() string {
 		base = filepath.Join(h, ".local", "state")
 	}
 	return filepath.Join(base, "asgitlog")
+}
+
+// migratePrefs copies the settings of the old location, once: only while the
+// new directory holds none. Best effort, like savePref.
+func migratePrefs() {
+	from, to := legacyPrefsDir(), prefsDir()
+	if from == "" || to == "" || from == to {
+		return
+	}
+	old, err := os.ReadDir(from)
+	if err != nil {
+		return
+	}
+	if cur, err := os.ReadDir(to); err == nil && len(cur) > 0 {
+		return
+	}
+	for _, e := range old {
+		if !e.Type().IsRegular() {
+			continue
+		}
+		if data, err := os.ReadFile(filepath.Join(from, e.Name())); err == nil {
+			savePref(e.Name(), strings.TrimSpace(string(data)))
+		}
+	}
 }
 
 func readPref(name string) string {
@@ -76,6 +105,7 @@ func readSplit(name string, def int) int {
 }
 
 func loadPrefs() prefs {
+	migratePrefs()
 	p := prefs{
 		layout:       layoutRows,
 		diff:         diffAuto,

@@ -395,7 +395,7 @@ func TestRenderSegsHighlightsMatchedBytes(t *testing.T) {
 // ---- prefs ----
 
 func TestPrefsRoundTrip(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	sandboxState(t)
 	if p := loadPrefs(); p != (prefs{layout: layoutRows, diff: diffAuto, tool: toolDelta, splitRows: 70, splitColumns: 75}) {
 		t.Errorf("defaults = %+v", p)
 	}
@@ -407,9 +407,13 @@ func TestPrefsRoundTrip(t *testing.T) {
 	if p := loadPrefs(); p != (prefs{layout: layoutColumns, diff: diffSingle, tool: toolHunk, splitRows: 55, splitColumns: 80}) {
 		t.Errorf("after save = %+v", p)
 	}
-	if got := filepath.Base(prefsDir()); got != "asgitlog" {
-		t.Errorf("prefs dir = %q", prefsDir())
+	// inside herdr the settings live where herdr says; alone, in that same place
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", "")
+	t.Setenv("XDG_STATE_HOME", "/state")
+	if got := prefsDir(); got != "/state/herdr/plugins/asumaran.asgitlog" {
+		t.Errorf("standalone prefs dir = %q", got)
 	}
+	sandboxState(t)
 	savePref("layout", "garbage")
 	savePref("split-rows", "5")
 	if p := loadPrefs(); p.layout != layoutRows || p.splitRows != 70 {
@@ -762,5 +766,39 @@ func TestRenderDiffWithDelta(t *testing.T) {
 		if files := fileLines(out); len(files) != 2 {
 			t.Errorf("sbs=%v: delta file headers found at %v, want 2", sbs, files)
 		}
+	}
+}
+
+// sandboxState points the settings at an empty directory, and the location
+// they used to live in at another, so a test never reads the user's own.
+func sandboxState(t *testing.T) (dir, legacy string) {
+	t.Helper()
+	dir, legacy = t.TempDir(), t.TempDir()
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	t.Setenv("XDG_STATE_HOME", legacy)
+	return dir, filepath.Join(legacy, "asgitlog")
+}
+
+// TestPrefsMigrateOnce covers the move to the family's state directory: the
+// old settings are copied while the new directory is empty, and never again.
+func TestPrefsMigrateOnce(t *testing.T) {
+	dir, legacy := sandboxState(t)
+	if err := os.MkdirAll(legacy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range map[string]string{"layout": layoutColumns, "split-columns": "60"} {
+		if err := os.WriteFile(filepath.Join(legacy, name), []byte(value+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if p := loadPrefs(); p.layout != layoutColumns || p.splitColumns != 60 {
+		t.Errorf("first run must pick the old settings up: %+v", p)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "layout")); strings.TrimSpace(string(data)) != layoutColumns {
+		t.Errorf("the settings were not copied to the new directory: %q", data)
+	}
+	savePref("layout", layoutRows)
+	if p := loadPrefs(); p.layout != layoutRows {
+		t.Errorf("a later run must not copy the old settings again: %+v", p)
 	}
 }

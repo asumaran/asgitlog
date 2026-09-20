@@ -274,7 +274,9 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   hint lives on as a help-only binding.
 - **Settings** (`layout`, `diff`, `renderer`, `whitespace`, `split-rows`,
   `split-columns`)
-  are one plain-text file each under `${XDG_STATE_HOME:-~/.local/state}/asgitlog/`,
+  are one plain-text file each under the family's state directory
+  (`stateDirFor`, the shared `statedir.go`; `migratePrefs` copies the ones from
+  the old `${XDG_STATE_HOME:-~/.local/state}/asgitlog/` once),
   not the herdr plugin state dir: the popup and the shell binary share them.
 - **Plugin pane cwd**: herdr starts plugin panes in the plugin root and
   resolves the manifest's `./asgitlog` against the pane's cwd, so the pane

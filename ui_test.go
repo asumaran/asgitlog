@@ -18,7 +18,7 @@ import (
 // git process starts: renders are answered by hand (see settle).
 func testModel(t *testing.T, n int) *model {
 	t.Helper()
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	sandboxState(t)
 	m := newModel(loadPrefs(), "", logOpts{})
 	batch := make([]commit, n)
 	for i := range batch {
@@ -662,7 +662,7 @@ func TestScopeAndPickaxeInput(t *testing.T) {
 }
 
 func TestLogErrorAndFatal(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	sandboxState(t)
 	m := newModel(loadPrefs(), "", logOpts{})
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
 	m.Update(logBatch{done: true, err: fmt.Errorf("fatal: your current branch 'main' does not have any commits yet")})
