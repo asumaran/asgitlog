@@ -1,3 +1,11 @@
+## v0.6.0 (2026-09-19)
+
+* feat(ui): placeholder in the filter, name only standalone (f7e08cb)
+* feat(ui): page the list, jump to its ends, expand the help (3c4b4a9)
+* fix(filter): stop scoring short texts higher (6209287)
+* refactor(ui): one highlight implementation for the family (a1a6946)
+* fix(filter): match the query where it occurs whole (234235b)
+
 ## v0.5.0 (2026-09-19)
 
 * feat(ui): show the list's position under the list (8fea744)
