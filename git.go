@@ -424,13 +424,6 @@ func streamLog(ctx context.Context, opts logOpts, gen int) <-chan logBatch {
 	return ch
 }
 
-func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
-	}
-	return s
-}
-
 // ---- commit detail ----
 
 type fileStat struct {

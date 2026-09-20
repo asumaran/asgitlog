@@ -28,13 +28,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-func homeRel(p string) string {
-	if h, err := os.UserHomeDir(); err == nil && h != "" && (p == h || strings.HasPrefix(p, h+"/")) {
-		return "~" + strings.TrimPrefix(p, h)
-	}
-	return p
-}
-
 // ---- styles ----
 
 var (
