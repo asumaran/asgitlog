@@ -171,12 +171,13 @@ def dump(title, f):
 
 def has(f, text): return any(text in l for l in f)
 def selected(f): return [l for l in f if l.startswith("│▌ ")]
-def counter(f, text): return f[COUNTER].endswith(" " + text + " ─┤")
+# the pty check runs an unstamped build, which says "(dev)" after the counter
+def counter(f, text): return f[COUNTER].endswith(" " + text + " (dev) ─┤")
 def pref(name):
     try: return open(os.path.join(STATE, "asgitlog", name)).read().strip()
     except OSError: return None
 
-PROMPT = "asgitlog (dev) ❯"
+PROMPT = "asgitlog ❯"
 UP, DOWN, RIGHT, ESC, ENTER, TAB, BACKSPACE = b"\x1b[A", b"\x1b[B", b"\x1b[C", b"\x1b", b"\r", b"\t", b"\x7f"
 CTRL_A, CTRL_C, CTRL_G, CTRL_L, CTRL_O, CTRL_T, CTRL_Y, SHIFT_RIGHT = b"\x01", b"\x03", b"\x07", b"\x0c", b"\x0f", b"\x14", b"\x19", b"\x1b[1;2C"
 

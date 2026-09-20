@@ -39,6 +39,10 @@ are split by concern but everything stays in `package main`:
   occurs in one piece could still match scattered letters before it. When the
   query occurs whole, that occurrence is the match; here only the highlight changes, hits stay in log order. The same file in every
   tool of the family.
+- `prompt.go`: the filter input, its prompt (with the tool's name only outside
+  herdr's popup, where the pane's title already says it), the placeholder and
+  the `(dev)` mark after the counter, on the edge over the input. The same file
+  in every tool of the family. The `/` search and the `-S` inputs keep their own prompts.
 - `helpfoot.go`: the help at the foot, the key that expands it, its height and
   its lines cut to the width. The same file in every tool of the family,
   which took the expandable help from here.

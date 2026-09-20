@@ -42,8 +42,6 @@ func truncate(s string, width int) string {
 // ---- styles ----
 
 var (
-	stPrompt = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Bold(true)
-	stDev    = lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true)
 	stCursor = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
 	stDim    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	stTitle  = lipgloss.NewStyle().Bold(true)
@@ -280,7 +278,7 @@ func newModel(p prefs, deltaBin string, opts logOpts) *model {
 		opts:     opts,
 		loading:  true,
 		prefs:    p,
-		ti:       newInput(promptText()),
+		ti:       newFilterInput("asgitlog", "Search by subject, author, hash, ref…"),
 		si:       newInput(stPrompt.Render("/")),
 		pi:       newInput(stPrompt.Render("search the diffs (-S) ❯ ")),
 		prevVP:   viewport.New(viewport.WithWidth(80), viewport.WithHeight(10)),
@@ -310,15 +308,6 @@ func newInput(prompt string) textinput.Model {
 	st.Blurred.Prompt = lipgloss.NewStyle()
 	ti.SetStyles(st)
 	return ti
-}
-
-// promptText builds the filter prompt, with an orange "(dev)" marker on
-// non-release builds.
-func promptText() string {
-	if strings.HasPrefix(version, "v") {
-		return stPrompt.Render("asgitlog ❯ ")
-	}
-	return stPrompt.Render("asgitlog (") + stDev.Render("dev") + stPrompt.Render(") ❯ ")
 }
 
 // ---- log stream ----
@@ -566,6 +555,7 @@ func (m *model) resize() {
 	m.fullVP.SetWidth(max(10, m.width))
 	m.fullVP.SetHeight(max(1, m.height-2-m.footH()))
 	m.help.SetWidth(max(0, m.width-4))
+	sizeInput(&m.ti, m.width-4)
 	m.clampCursor()
 }
 
@@ -1432,7 +1422,7 @@ func (m *model) listView() string {
 	out := []string{
 		hline(w, "╭", "╮", "", ""),
 		framed(w, stInfo.Render(m.info)),
-		hline(w, "├", "┤", "", m.counter()),
+		hline(w, "├", "┤", "", withDevMark(m.counter())),
 		framed(w, input),
 	}
 	out = append(out, m.mainLines()...)

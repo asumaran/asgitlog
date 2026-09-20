@@ -155,7 +155,7 @@ func TestRowsLayout(t *testing.T) {
 	ls := lines(m)
 	// One frame, four sections sharing their edges: summary, input (counter
 	// on the edge over it), main, help.
-	if !strings.HasPrefix(ls[0], "╭─") || !strings.HasPrefix(ls[2], "├─") || !strings.HasSuffix(ls[2], " 5/5 ─┤") ||
+	if !strings.HasPrefix(ls[0], "╭─") || !strings.HasPrefix(ls[2], "├─") || !strings.HasSuffix(ls[2], " 5/5 (dev) ─┤") ||
 		!strings.HasPrefix(ls[3], "│ asgitlog") || !strings.HasPrefix(ls[4], "├─") || !strings.HasPrefix(ls[40], "├─") ||
 		!strings.HasPrefix(ls[41], "│ type filter") || !strings.HasPrefix(ls[42], "╰─") {
 		t.Errorf("sections:\n%s", screen(m))
@@ -329,7 +329,7 @@ func TestFilterFlow(t *testing.T) {
 			t.Fatalf("hits out of log order at %d", i)
 		}
 	}
-	if line := lines(m)[counterY]; !strings.HasSuffix(line, "─ 12/200 ─┤") {
+	if line := lines(m)[counterY]; !strings.HasSuffix(line, "─ 12/200 (dev) ─┤") { // tests run an unstamped build
 		t.Errorf("counter on the input box: %q", line)
 	}
 	press(m, "down")
@@ -652,7 +652,7 @@ func TestScopeAndPickaxeInput(t *testing.T) {
 	if m.mode != modeList || m.opts.pickaxe != "" || m.logGen != 0 {
 		t.Errorf("esc cancels: mode=%v pickaxe=%q gen=%d", m.mode, m.opts.pickaxe, m.logGen)
 	}
-	if s := lines(m)[counterY]; !strings.HasSuffix(s, "─ 3/3 [-- src] ─┤") {
+	if s := lines(m)[counterY]; !strings.HasSuffix(s, "─ 3/3 [-- src] (dev) ─┤") {
 		t.Errorf("scope next to the counter: %q", s)
 	}
 }
