@@ -1,3 +1,7 @@
+## v0.7.2 (2026-09-20)
+
+* refactor: share the renderers and the render cache (32bb8af)
+
 ## v0.7.1 (2026-09-20)
 
 * refactor(state): keep the settings in the shared dir (765d52e)
