@@ -1,3 +1,8 @@
+## v0.7.1 (2026-09-20)
+
+* refactor(state): keep the settings in the shared dir (765d52e)
+* refactor(search): parse terms with the shared matcher (691a510)
+
 ## v0.7.0 (2026-09-19)
 
 * feat(ui): move the counter under the list (0522c99)
