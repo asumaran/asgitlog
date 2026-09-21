@@ -1,3 +1,14 @@
+## v0.10.0 (2026-09-21)
+
+* docs: describe the new shared files and flashes (e467557)
+* refactor(preview): render through renderqueue.go (ba8da08)
+* docs(readme): the opener is a command line (3b3591e)
+* fix(ui): say when the browser failed to open (9642977)
+* docs: match the docs to the shared helpers (d4a79da)
+* refactor(ui): share the diff options and fatal (4545fb1)
+* test(pty): cover the whitespace toggle (e322432)
+* fix(list): word the empty list as the family does (eb0dd40)
+
 ## v0.9.1 (2026-09-20)
 
 * refactor(list): keep the cursor in view with scrollTo (dd6e53a)
