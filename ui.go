@@ -430,13 +430,7 @@ func (m *model) applyQuery() {
 func (m *model) clampCursor() {
 	n := m.rowCount()
 	m.cursor = max(0, min(m.cursor, n-1))
-	h := m.listH()
-	if m.cursor < m.top {
-		m.top = m.cursor
-	} else if m.cursor >= m.top+h {
-		m.top = m.cursor - h + 1
-	}
-	m.top = max(0, min(m.top, max(0, n-h)))
+	m.top = scrollTo(m.top, m.listH(), n, m.cursor, m.cursor)
 }
 
 func (m *model) moveCursor(delta int) tea.Cmd {

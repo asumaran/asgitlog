@@ -57,7 +57,8 @@ are split by concern but everything stays in `package main`:
   place and every key under them (`option`, `panel`, `panelLines`,
   `overlay`). The same file in every tool of the family.
 - `listnav.go`: `listNav`, the keys that move the cursor through the list and
-  where each one takes it. The same file in every tool of the family, which
+  where each one takes it. `scrollTo` keeps the cursor in view (`clampCursor`
+  goes through it). The same file in every tool of the family, which
   took these keys from here.
 - `highlight.go`: `highlightFrom`, `matchOver`, `onSel` and the
   `stSel`/`stMatch` styles, how a match and the selected row look;
