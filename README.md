@@ -170,7 +170,8 @@ once). The rendered diffs are a cache and live in
 `ASGITLOG_DELTA` and `ASGITLOG_HUNK` replace the renderers' binaries (`none`
 turns one off). `ASGITLOG_CLIPBOARD` and `ASGITLOG_OPENER` replace the
 clipboard command (`pbcopy` on macOS; `wl-copy`, `xclip` or `xsel` on Linux)
-and the browser opener (`xdg-open` on Linux); the tests point them at stubs.
+and the browser opener (`xdg-open` on Linux; a command line, the URL is
+appended); the tests point them at stubs.
 `ASGITLOG_NO_CACHE=1` turns the disk cache off. `ASGITLOG_POPUP_WIDTH` /
 `ASGITLOG_POPUP_HEIGHT` (e.g. `95%`) override the popup size from the manifest
 (85% x 90%).
