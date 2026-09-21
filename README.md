@@ -2,7 +2,8 @@
 
 Browse the git history of a repository from the terminal: a filterable commit
 list with a preview of the selected commit. The diff in the preview is
-rendered by [delta](https://github.com/dandavison/delta). It runs as a
+rendered by [hunk](https://hunk.dev) or
+[delta](https://github.com/dandavison/delta). It runs as a
 [herdr](https://github.com/asumaran/herdr) plugin popup, on the repository of
 the pane you were in, and as a plain command in any shell.
 
@@ -30,8 +31,8 @@ herdr plugin install asumaran/asgitlog
 The manifest's `[[build]]` runs `scripts/fetch-binary.sh`, which downloads the
 release binary matching the manifest version and falls back to `go build`
 (`ASGITLOG_BUILD_FROM_SOURCE=1` skips the download). Requires herdr >= 0.7.5
-and `git`. Install `delta` too: without it the diff falls back to git's own
-colors. Prebuilt binaries for macOS and Linux (arm64 and amd64); anything else builds from source.
+and `git`. Install `hunk` or `delta` too (`brew install hunk git-delta`):
+with neither the diff falls back to git's own colors. Prebuilt binaries for macOS and Linux (arm64 and amd64); anything else builds from source.
 
 Bind a key to the `open` action in `~/.config/herdr/config.toml`:
 
@@ -61,11 +62,14 @@ in the row (hash, author, email, subject, refs, date), ignoring case, and all
 of them must match. Prefix a word with `~` to match it fuzzily (`~prvw` finds
 "preview"); the other tools of the family take the same syntax with fuzzy as
 the default and `'word` for an exact one. Commits always stay in log order.
+Pasting into the filter (a terminal paste or `ctrl+v`) filters like typing
+does. A query of spaces only, or a bare `~` or `'`, is not a query yet: the
+list stays as it is and the selection does not move.
 
 The list starts right under the filter input with the newest commit and goes
 down the history.
 
-| Key | Action |
+| key | action |
 | --- | --- |
 | `↑`/`↓`, `ctrl+p`/`ctrl+n` | move the selection |
 | `pgup`/`pgdn` | move a page |
@@ -77,7 +81,7 @@ down the history.
 | mouse wheel over the list | move the selection |
 | left click | select a commit |
 | `ctrl+t` | diff mode: auto, side-by-side, single column |
-| panel: Diff renderer | render the diffs with [hunk](https://hunk.dev), the default, or with delta (remembered; delta also stands in while hunk is not installed) |
+| panel: Diff renderer | render the diffs with [hunk](https://hunk.dev), the default, or with delta (remembered; delta also stands in while hunk is not installed). Choosing one that is not installed says `<name> not found` and changes nothing |
 | `ctrl+s` | show or ignore whitespace changes, like GitHub's "Hide whitespace" (`git show -w`, remembered); `[-w]` on the bottom edge while it is on |
 | panel: Layout | preview below (rows) / on the side (columns) |
 | `shift+←`/`shift+→` | shrink / grow the list |
@@ -90,7 +94,7 @@ down the history.
 
 In the full-screen diff:
 
-| Key | Action |
+| key | action |
 | --- | --- |
 | `↑`/`↓`/`j`/`k`, `space`/`b`, `d`/`u` | scroll a line, a page, half a page |
 | `g`/`G` | top / bottom |
@@ -104,7 +108,10 @@ In the full-screen diff:
 
 - As a herdr popup it browses the repository of the pane that was focused
   when it opened; from a shell, the one of the current directory. Outside a
-  repository it says so and exits.
+  repository it says so and exits; the popup keeps the message up until
+  `enter`, since it closes with the process.
+- A `git log` that fails (an empty repository) is reported in the list, in
+  red.
 - The history is streamed, so a large repository is usable while the rest
   loads. The counter under the list shows `matches/total`; the edge over the input
   shows whatever the log is scoped to.
@@ -122,7 +129,8 @@ In the full-screen diff:
   columns wide. delta gets an explicit `--width` and `--side-by-side` or not;
   everything else (theme, line numbers, ...) comes from your own delta
   configuration. Jumping between files relies on delta's default file
-  header (the path over a rule).
+  header (the path over a rule). With neither renderer installed, changing
+  the diff mode says `no renderer found: plain git colors`.
 - The panel's Diff renderer option hands the diffs to hunk instead, for its looks only: hunk is a
   full-screen program with no plain output, so asgitlog runs it on an
   off-screen terminal tall enough for the whole patch and shows what it drew.
@@ -135,16 +143,8 @@ In the full-screen diff:
 - The working tree row previews `git diff HEAD` and lists untracked files.
 - `ctrl+o` builds the URL from the `origin` remote (or the upstream's remote)
   and knows the GitHub, GitLab and Bitbucket commit paths.
-- Settings live in the state directory herdr gives the plugin (on its own it works out the same one,
-  `${XDG_STATE_HOME:-~/.local/state}/herdr/plugins/asumaran.asgitlog/`; the ones from
-  `${XDG_STATE_HOME:-~/.local/state}/asgitlog/` are copied over once) (`layout`,
-  `diff`, `renderer`, `whitespace`, `split-rows`, `split-columns`), shared by the popup and the shell
-  command.
-- `ASGITLOG_POPUP_WIDTH` / `ASGITLOG_POPUP_HEIGHT` (e.g. `95%`) override the
-  popup size from the manifest (85% x 90%). `ASGITLOG_DELTA` and `ASGITLOG_HUNK` replace the
-  renderers' binaries (`none` turns one off). `ASGITLOG_CLIPBOARD` and
-  `ASGITLOG_OPENER` replace the clipboard command (`pbcopy` on macOS; `wl-copy`,
-  `xclip` or `xsel` on Linux) and the browser opener (`xdg-open` on Linux).
+- The settings are shared by the popup and the shell command, and only an
+  option you changed is saved.
 
 ## Development
 
@@ -152,11 +152,28 @@ In the full-screen diff:
 go build -o asgitlog .     # local build (plugin runs ./asgitlog from the repo root)
 ./asgitlog -dump           # repo summary, settings and the first rows (no TTY)
 ./asgitlog -dump -query fix -n 0          # rows matching a query
-./asgitlog -dump -show HEAD -width 140    # a commit's preview, header + delta
+./asgitlog -dump -show HEAD -width 140    # a commit's preview, header + diff
+./asgitlog -version        # print the embedded version
 go vet ./... && go test ./...
 scripts/pty-check.py ./asgitlog           # end-to-end on a pty (python3 + pyte)
 herdr plugin link "$PWD"   # register the working copy (no build step)
 ```
+
+Runtime state (the settings `layout`, `diff`, `renderer`, `whitespace`,
+`refs`, `split-rows` and `split-columns`) lives in `HERDR_PLUGIN_STATE_DIR`;
+standalone runs use the same directory
+(`${XDG_STATE_HOME:-~/.local/state}/herdr/plugins/asumaran.asgitlog/`; the
+settings from `${XDG_STATE_HOME:-~/.local/state}/asgitlog/` are copied over
+once). The rendered diffs are a cache and live in
+`${XDG_CACHE_HOME:-~/.cache}/asgitlog/renders`.
+
+`ASGITLOG_DELTA` and `ASGITLOG_HUNK` replace the renderers' binaries (`none`
+turns one off). `ASGITLOG_CLIPBOARD` and `ASGITLOG_OPENER` replace the
+clipboard command (`pbcopy` on macOS; `wl-copy`, `xclip` or `xsel` on Linux)
+and the browser opener (`xdg-open` on Linux); the tests point them at stubs.
+`ASGITLOG_NO_CACHE=1` turns the disk cache off. `ASGITLOG_POPUP_WIDTH` /
+`ASGITLOG_POPUP_HEIGHT` (e.g. `95%`) override the popup size from the manifest
+(85% x 90%).
 
 ## Demo recording
 
