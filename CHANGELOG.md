@@ -1,3 +1,7 @@
+## v0.10.1 (2026-09-21)
+
+* test(pty): expect the no renderer flash on ci (e17f3f8)
+
 ## v0.10.0 (2026-09-21)
 
 * docs: describe the new shared files and flashes (e467557)
