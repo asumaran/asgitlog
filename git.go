@@ -18,53 +18,20 @@ import (
 	"time"
 )
 
-// ---- repo summary ----
+// ---- the remote's web page ----
 
-// repoInfo is the one-line repo summary of the head: repo path, branch (or
-// short hash when detached), upstream and ahead/behind counts.
-type repoInfo struct {
-	Top      string
-	Branch   string
-	Upstream string
-	Ahead    int
-	Behind   int
-	WebURL   string // https base of the origin remote, "" when unknown
-}
-
-func loadRepoInfo() repoInfo {
-	ctx := context.Background()
-	var ri repoInfo
-	ri.Top, _ = runGit(ctx, "rev-parse", "--show-toplevel")
-	ri.Branch, _ = runGit(ctx, "symbolic-ref", "--quiet", "--short", "HEAD")
-	if ri.Branch == "" {
-		ri.Branch, _ = runGit(ctx, "rev-parse", "--short", "HEAD")
-	}
-	ri.Upstream, _ = runGit(ctx, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
-	if ri.Upstream != "" {
-		// --left-right on upstream...HEAD: left = behind, right = ahead.
-		if out, err := runGit(ctx, "rev-list", "--left-right", "--count", ri.Upstream+"...HEAD"); err == nil {
-			if f := strings.Fields(out); len(f) == 2 {
-				ri.Behind, _ = strconv.Atoi(f[0])
-				ri.Ahead, _ = strconv.Atoi(f[1])
-			}
-		}
-	}
+// loadWebURL is the https base of the web page of the remote the branch
+// follows (origin without an upstream), "" when it is not recognizable.
+func loadWebURL(upstream string) string {
 	remote := "origin"
-	if name, _, ok := strings.Cut(ri.Upstream, "/"); ok {
+	if name, _, ok := strings.Cut(upstream, "/"); ok {
 		remote = name
 	}
-	if url, err := runGit(ctx, "remote", "get-url", remote); err == nil {
-		ri.WebURL = webURL(url)
+	url, err := runGit(context.Background(), "remote", "get-url", remote)
+	if err != nil {
+		return ""
 	}
-	return ri
-}
-
-func (ri repoInfo) String() string {
-	s := homeRel(ri.Top) + "  " + ri.Branch
-	if ri.Upstream != "" {
-		s += " -> " + ri.Upstream + " (ahead " + strconv.Itoa(ri.Ahead) + ", behind " + strconv.Itoa(ri.Behind) + ")"
-	}
-	return s
+	return webURL(url)
 }
 
 // webURL turns a remote URL (scp-like, ssh:// or https://) into the https

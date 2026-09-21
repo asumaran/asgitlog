@@ -29,12 +29,9 @@ const (
 
 // render is one cached preview: the content and the lines where each file's
 // diff starts (for jumping between files).
-// A render is partial while its tool is still refining it (hunk's syntax
-// highlighting): it is shown, and replaced when the final one arrives.
 type render struct {
 	content string
 	files   []int
-	partial bool
 }
 
 type previewMsg struct {
@@ -42,7 +39,9 @@ type previewMsg struct {
 	hash   string
 	detail detail
 	render render
-	err    error
+	// partial marks a render its tool is still refining (hunk's first frame).
+	partial bool
+	err     error
 	// cancelled marks a render whose context was cancelled because the
 	// selection moved on; its error is not worth showing.
 	cancelled bool
@@ -84,7 +83,7 @@ func renderPreviewCmd(ctx context.Context, c commit, width int, mode string, too
 			if diff != "" { // an empty commit already says "no changes"
 				content += "\n\n" + sectionRule(stLabel.Render("diff"), width) + "\n\n" + diff
 			}
-			return previewMsg{key: key, hash: c.hash, detail: d, render: render{content, fileLines(content), partial}}
+			return previewMsg{key: key, hash: c.hash, detail: d, render: render{content, fileLines(content)}, partial: partial}
 		}
 		id := renderID(c.hash, paths)
 		if diff, ok := renderCache.get(tool, id, width, mode); ok {
@@ -101,9 +100,7 @@ func renderPreviewCmd(ctx context.Context, c commit, width int, mode string, too
 		if err != nil {
 			return fail(err)
 		}
-		if tool.bin != "" { // plain git is as fast as reading it back
-			renderCache.put(tool, id, width, mode, diff)
-		}
+		renderCache.put(tool, id, width, mode, diff)
 		return rendered(diff, false)
 	}
 	return func() tea.Msg {

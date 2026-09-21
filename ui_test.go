@@ -33,9 +33,9 @@ func testModel(t *testing.T, n int) *model {
 // settle answers every pending render (the wanted one, then the prefetched
 // neighbors) with a body naming the render's key.
 func settle(m *model) {
-	for len(m.inflight) > 0 {
+	for len(m.queue.inflight) > 0 {
 		for _, k := range flying(m, true) {
-			if m.inflight[k].dying {
+			if m.queue.inflight[k].dying {
 				m.Update(previewMsg{key: k, cancelled: true, err: context.Canceled})
 				continue
 			}
@@ -47,7 +47,7 @@ func settle(m *model) {
 // flying lists the renders in flight, sorted; dying ones only when asked for.
 func flying(m *model, dying bool) []string {
 	var keys []string
-	for k, p := range m.inflight {
+	for k, p := range m.queue.inflight {
 		if dying || !p.dying {
 			keys = append(keys, k)
 		}
@@ -129,23 +129,53 @@ func TestGeometry(t *testing.T) {
 	if m.detailsW() != 118 || m.listW() != 39 || m.listH() != 35 || m.detailsH() != 35 || m.prevVP.Height() != 35 || m.prevVP.Width() != 116 {
 		t.Errorf("columns: list=%dx%d details=%dx%d vp=%dx%d", m.listW(), m.listH(), m.detailsW(), m.detailsH(), m.prevVP.Width(), m.prevVP.Height())
 	}
-	for _, size := range [][2]int{{160, 43}, {80, 24}, {61, 18}, {40, 16}} {
+	// The frame invariant, as in every tool of the family: exactly height
+	// lines, each exactly width cells, in both layouts, with the panel closed
+	// and open. The main section is never under four lines (mainH), so the
+	// frame is never under minFrameH: a popup shorter than that is cut by the
+	// terminal, not squeezed.
+	const minFrameH = mainY + 1 + 4 + 1 + 2 // what is over the main section, its edges around four lines, the help, the bottom edge
+	sizes := [][2]int{{160, 43}, {94, 24}, {150, 16}, {80, 24}, {61, 18}, {61, 12}, {40, 16}, {40, 10}}
+	for _, size := range sizes {
 		for range 2 {
 			m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
-			// With the help folded and expanded: the frame always fits.
 			for _, view := range []string{"panel closed", "panel open"} {
-				ls := lines(m)
-				if len(ls) != size[1] {
-					t.Errorf("%v layout=%s %s: view has %d lines", size, m.prefs.layout, view, len(ls))
+				ls := strings.Split(m.View().Content, "\n")
+				if want := max(size[1], minFrameH); len(ls) != want {
+					t.Errorf("%v layout=%s %s: view has %d lines, want %d", size, m.prefs.layout, view, len(ls), want)
 				}
-				for _, l := range ls {
-					if w := ansi.StringWidth(l); w > size[0] {
-						t.Errorf("%v layout=%s %s: line is %d cells: %q", size, m.prefs.layout, view, w, l)
+				for i, l := range ls {
+					if w := ansi.StringWidth(l); w != size[0] {
+						t.Errorf("%v layout=%s %s: line %d is %d cells: %q", size, m.prefs.layout, view, i, w, ansi.Strip(l))
 					}
 				}
 				press(m, "f1")
 			}
 			m.cycle("layout")
+		}
+	}
+	// The full view is a pager, not a frame: a status line, the diff and the
+	// help, exactly height lines whatever the height. The diff's lines take the
+	// whole width; the status and the help are cut to it, not padded.
+	for _, size := range sizes {
+		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		press(m, "enter")
+		if m.mode != modeFull {
+			t.Fatalf("%v: enter should open the full view", size)
+		}
+		ls := strings.Split(m.View().Content, "\n")
+		if len(ls) != size[1] {
+			t.Errorf("%v full view: %d lines", size, len(ls))
+		}
+		for i, l := range ls {
+			w, body := ansi.StringWidth(l), i > 0 && i < len(ls)-1
+			if w > size[0] || (body && w != size[0]) {
+				t.Errorf("%v full view: line %d is %d cells: %q", size, i, w, ansi.Strip(l))
+			}
+		}
+		press(m, "esc")
+		if m.mode != modeList {
+			t.Fatalf("%v: esc should go back to the list", size)
 		}
 	}
 }
@@ -392,16 +422,16 @@ func TestPreviewPipelinesAndPrefetch(t *testing.T) {
 	// …and cancels it once the selection has left it behind. Dying renders
 	// hold their slot until they report back, so nothing piles up.
 	press(m, "down", "down")
-	if !m.inflight[a].dying || !m.inflight[b].dying || !only(m, keyAt(m, 2)) || len(m.inflight) != maxPipelines {
+	if !m.queue.inflight[a].dying || !m.queue.inflight[b].dying || !only(m, keyAt(m, 2)) || len(m.queue.inflight) != maxPipelines {
 		t.Fatalf("left behind: inflight=%v live=%v", flying(m, true), flying(m, false))
 	}
 	d := keyAt(m, 3)
-	if m.wantKey != d || m.inflight[d] != nil {
+	if m.wantKey != d || m.queue.inflight[d] != nil {
 		t.Fatalf("no free slot: the wanted render waits, inflight=%v", flying(m, true))
 	}
 	m.Update(previewMsg{key: a, cancelled: true, err: fmt.Errorf("killed")})
-	if !only(m, keyAt(m, 2), d) || len(m.failed) != 0 {
-		t.Fatalf("wanted render not started on the freed slot: inflight=%v failed=%v", flying(m, true), m.failed)
+	if !only(m, keyAt(m, 2), d) || len(m.queue.failed) != 0 {
+		t.Fatalf("wanted render not started on the freed slot: inflight=%v failed=%v", flying(m, true), m.queue.failed)
 	}
 	m.Update(previewMsg{key: b, cancelled: true, err: fmt.Errorf("killed")})
 	m.Update(previewMsg{key: d, hash: hashOf(3), render: render{content: "HEADER\n\nTHE DIFF"}})
@@ -415,14 +445,14 @@ func TestPreviewPipelinesAndPrefetch(t *testing.T) {
 	}
 	settle(m)
 	for i := 2; i <= 3+prefetchAhead; i++ {
-		if _, ok := m.renders[keyAt(m, i)]; !ok {
+		if _, ok := m.queue.done[keyAt(m, i)]; !ok {
 			t.Errorf("commit %d not cached after the prefetch", i)
 		}
 	}
-	if _, ok := m.renders[keyAt(m, 3+prefetchAhead+1)]; ok {
+	if _, ok := m.queue.done[keyAt(m, 3+prefetchAhead+1)]; ok {
 		t.Error("prefetch must stop at the end of the window")
 	}
-	if _, ok := m.renders[keyAt(m, 1)]; ok {
+	if _, ok := m.queue.done[keyAt(m, 1)]; ok {
 		t.Error("only one row behind the cursor is in the window")
 	}
 	press(m, "down")
@@ -432,7 +462,7 @@ func TestPreviewPipelinesAndPrefetch(t *testing.T) {
 	// Turning around: the window follows the direction of travel.
 	press(m, "up", "up")
 	settle(m)
-	if _, ok := m.renders[keyAt(m, 0)]; !ok || m.dir != -1 {
+	if _, ok := m.queue.done[keyAt(m, 0)]; !ok || m.dir != -1 {
 		t.Errorf("going up should render the rows above: dir=%d", m.dir)
 	}
 }
@@ -445,7 +475,7 @@ func TestPreviewErrorIsShownOnce(t *testing.T) {
 	}
 	settle(m)
 	m.Update(tea.WindowSizeMsg{Width: 160, Height: 43}) // any event that re-evaluates the preview
-	if len(m.inflight) != 0 || !strings.Contains(screen(m), "delta exploded") {
+	if len(m.queue.inflight) != 0 || !strings.Contains(screen(m), "delta exploded") {
 		t.Errorf("a failed render must not be retried in a loop: inflight=%v", flying(m, true))
 	}
 }
@@ -643,7 +673,7 @@ func TestCopyAndBrowse(t *testing.T) {
 	if !strings.Contains(screen(m), "no remote with a web URL") {
 		t.Errorf("without a remote:\n%s", lines(m)[len(lines(m))-1])
 	}
-	m.Update(repoInfoMsg{Top: "/r", Branch: "main", WebURL: "https://github.com/a/b"})
+	m.Update(repoInfoMsg{repoInfo: repoInfo{Top: "/r", Branch: "main"}, WebURL: "https://github.com/a/b"})
 	_, cmd = m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
 	run(cmd)
 	logged, _ := os.ReadFile(filepath.Join(dir, "log"))
@@ -652,9 +682,87 @@ func TestCopyAndBrowse(t *testing.T) {
 	}
 }
 
+// TestCopyKeyWithNothingUnderTheCursor: the work tree's row has no hash and an
+// empty list has no row, so ctrl+y says so on the help line and the clipboard
+// command is never run.
+func TestCopyKeyWithNothingUnderTheCursor(t *testing.T) {
+	m := testModel(t, 0)
+	log := filepath.Join(t.TempDir(), "clip")
+	stub := filepath.Join(t.TempDir(), "clipboard")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\ncat > "+log+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ASGITLOG_CLIPBOARD", stub)
+	nothing := func(name string) {
+		t.Helper()
+		_, cmd := m.Update(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+		if cmd == nil {
+			t.Fatalf("%s: ctrl+y returned no command", name)
+		}
+		if msg := cmd(); msg != nil {
+			m.Update(msg)
+		}
+		if help := lines(m)[len(lines(m))-2]; !strings.Contains(help, "nothing to copy") {
+			t.Errorf("%s: help line = %q, want %q", name, help, "nothing to copy")
+		}
+		if _, err := os.Stat(log); err == nil {
+			t.Errorf("%s: the clipboard command ran with nothing to copy", name)
+		}
+		m.Update(clearFlashMsg(m.flash.seq))
+	}
+	wt, _ := parseCommit(recP("", wtShort, "", "", "01/01/2026 00:00", "", "", "1", "Uncommitted changes (2 files)"))
+	wt.wt = true
+	first := mustParse(t, rec(hashOf(1), "0000001", "Ada", "ada@x.io", "01/01/2026 10:00", "", "commit number 1"))
+	m.Update(logBatch{commits: []commit{wt, first}, done: true})
+	if c := m.current(); c == nil || !c.wt {
+		t.Fatalf("the cursor should start on the work tree's row: %+v", c)
+	}
+	nothing("work tree row")
+	typeText(m, "zzzzqq")
+	if m.rowCount() != 0 || m.current() != nil {
+		t.Fatalf("the query should match nothing, got %d rows", m.rowCount())
+	}
+	nothing("empty list")
+	if m.ti.Value() != "zzzzqq" {
+		t.Errorf("ctrl+y typed into the filter: %q", m.ti.Value())
+	}
+}
+
+// TestQQuitsOnlyWithEmptyFilter: in the list q quits while the filter is
+// empty and is text otherwise; in the full view it only goes back.
+func TestQQuitsOnlyWithEmptyFilter(t *testing.T) {
+	q := tea.KeyPressMsg{Code: 'q', Text: "q"}
+	_, cmd := testModel(t, 3).Update(q)
+	if cmd == nil {
+		t.Fatal("q with an empty filter should quit")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Error("q with an empty filter should quit")
+	}
+	// Past this point no command is run: it would be a render, that is, git.
+	m := testModel(t, 3)
+	typeText(m, "x")
+	m.Update(q)
+	if m.ti.Value() != "xq" || m.mode != modeList {
+		t.Errorf("filter = %q, want q typed as text", m.ti.Value())
+	}
+	m = testModel(t, 3)
+	press(m, "enter")
+	if m.mode != modeFull {
+		t.Fatal("enter should open the full view")
+	}
+	m.Update(q)
+	if m.mode != modeList || m.ti.Value() != "" {
+		t.Errorf("q in the full view goes back to the list: mode=%v filter=%q", m.mode, m.ti.Value())
+	}
+	if _, cmd := m.Update(q); cmd == nil {
+		t.Error("back in the list, q quits")
+	}
+}
+
 func TestScopeAndPickaxeInput(t *testing.T) {
 	m := testModel(t, 3)
-	m.Update(repoInfoMsg{Top: "/r", Branch: "main"})
+	m.Update(repoInfoMsg{repoInfo: repoInfo{Top: "/r", Branch: "main"}})
 	m.opts.paths = []string{"src"}
 	press(m, "ctrl+g")
 	if m.mode != modePickaxe || !strings.Contains(screen(m), "search the diffs (-S) ❯") {
@@ -735,7 +843,7 @@ func TestBackToTheNewestCommit(t *testing.T) {
 	}
 	settle(m)
 	body := strings.Repeat("line\n", 200)
-	m.renders[m.wantKey] = render{content: body}
+	m.queue.done[m.wantKey] = render{content: body}
 	m.shownKey = ""
 	m.updatePreview()
 	wheel(tea.MouseWheelDown, 10, m.listY()+m.listH()+5) // over the details
@@ -792,8 +900,8 @@ func TestPartialRender(t *testing.T) {
 	m := testModel(t, 10)
 	k := m.wantKey
 	final := func() tea.Msg { return nil }
-	m.Update(previewMsg{key: k, hash: hashOf(0), render: render{content: "PLAIN\nline 2\nline 3", partial: true}, next: final})
-	if m.inflight[k] == nil || !strings.Contains(screen(m), "PLAIN") || !m.renders[k].partial {
+	m.Update(previewMsg{key: k, hash: hashOf(0), render: render{content: "PLAIN\nline 2\nline 3"}, partial: true, next: final})
+	if m.queue.inflight[k] == nil || !strings.Contains(screen(m), "PLAIN") || !m.queue.partial[k] {
 		t.Fatalf("a partial render is shown while its pipeline stays in flight: inflight=%v\n%s", flying(m, true), screen(m))
 	}
 	// Shown is served: the window is rendered ahead in the slots left.
@@ -801,30 +909,30 @@ func TestPartialRender(t *testing.T) {
 		t.Errorf("prefetch next to a partial render: inflight=%v", flying(m, true))
 	}
 	m.Update(previewMsg{key: k, hash: hashOf(0), render: render{content: "COLORED\nline 2\nline 3"}})
-	if !strings.Contains(screen(m), "COLORED") || m.renders[k].partial || m.inflight[k] != nil {
+	if !strings.Contains(screen(m), "COLORED") || m.queue.partial[k] || m.queue.inflight[k] != nil {
 		t.Errorf("the final render replaces it: inflight=%v\n%s", flying(m, true), screen(m))
 	}
 
 	// Moving on cancels the pipeline: a partial render that will never be
 	// refined is dropped, so coming back renders the commit again.
 	k1 := keyAt(m, 1)
-	m.Update(previewMsg{key: k1, hash: hashOf(1), render: render{content: "PLAIN 1", partial: true}, next: final})
+	m.Update(previewMsg{key: k1, hash: hashOf(1), render: render{content: "PLAIN 1"}, partial: true, next: final})
 	press(m, "down", "down", "down")
-	if !m.inflight[k1].dying {
+	if !m.queue.inflight[k1].dying {
 		t.Fatalf("left behind: inflight=%v", flying(m, true))
 	}
 	m.Update(previewMsg{key: k1, hash: hashOf(1), err: context.Canceled, cancelled: true})
-	if _, kept := m.renders[k1]; kept || m.inflight[k1] != nil {
+	if _, kept := m.queue.done[k1]; kept || m.queue.inflight[k1] != nil {
 		t.Errorf("cancelled: partial kept=%v inflight=%v", kept, flying(m, true))
 	}
 	// hunk failing after its first frame: that frame is what there is.
 	settle(m)
 	k3 := m.wantKey
-	delete(m.renders, k3)
-	m.Update(previewMsg{key: k3, hash: hashOf(3), render: render{content: "PLAIN 3", partial: true}, next: final})
+	delete(m.queue.done, k3)
+	m.Update(previewMsg{key: k3, hash: hashOf(3), render: render{content: "PLAIN 3"}, partial: true, next: final})
 	m.Update(previewMsg{key: k3, hash: hashOf(3), err: &renderError{"hunk did not finish rendering"}})
-	if r := m.renders[k3]; r.partial || r.content != "PLAIN 3" || m.failed[k3] != "" || !strings.Contains(screen(m), "PLAIN 3") {
-		t.Errorf("failed after a partial render: %+v failed=%q", r, m.failed[k3])
+	if r := m.queue.done[k3]; m.queue.partial[k3] || r.content != "PLAIN 3" || m.queue.failed[k3] != "" || !strings.Contains(screen(m), "PLAIN 3") {
+		t.Errorf("failed after a partial render: %+v failed=%q", r, m.queue.failed[k3])
 	}
 }
 
@@ -835,12 +943,12 @@ func TestWantedRenderTakesASlot(t *testing.T) {
 	// selection's: the least wanted one makes room.
 	m.cursor, m.dir = 4, 1
 	for _, i := range []int{5, 3, 6} {
-		delete(m.renders, keyAt(m, i))
-		m.inflight[keyAt(m, i)] = &pipeline{cancel: func() {}}
+		delete(m.queue.done, keyAt(m, i))
+		m.queue.inflight[keyAt(m, i)] = &pipeline{cancel: func() {}}
 	}
-	delete(m.renders, keyAt(m, 4))
+	delete(m.queue.done, keyAt(m, 4))
 	m.updatePreview()
-	if !m.inflight[keyAt(m, 6)].dying || !only(m, keyAt(m, 3), keyAt(m, 5)) {
+	if !m.queue.inflight[keyAt(m, 6)].dying || !only(m, keyAt(m, 3), keyAt(m, 5)) {
 		t.Fatalf("the furthest row ahead should give its slot up: live=%v", flying(m, false))
 	}
 	m.Update(previewMsg{key: keyAt(m, 6), cancelled: true, err: context.Canceled})

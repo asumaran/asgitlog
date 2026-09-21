@@ -12,6 +12,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"slices"
 	"strings"
@@ -61,7 +62,7 @@ func main() {
 	}
 
 	if *dump {
-		os.Exit(runDump(m, *query, *show, *limit, *width))
+		os.Exit(runDump(os.Stdout, m, *query, *show, *limit, *width))
 	}
 
 	go renderCache.prune(cacheMaxBytes)
@@ -75,30 +76,32 @@ func main() {
 // runDump prints what the TUI would show, without a TTY: the repo summary,
 // the settings and the list rows laid out for width (filtered by query), or
 // with show the preview of one commit. Colors are kept only on a terminal.
-func runDump(m *model, query, show string, limit, width int) int {
+func runDump(w io.Writer, m *model, query, show string, limit, width int) int {
+	f, isFile := w.(*os.File)
+	colors := isFile && term.IsTerminal(f.Fd()) // of where it is written, not of stdout
 	out := func(s string) {
-		if !term.IsTerminal(os.Stdout.Fd()) {
+		if !colors {
 			s = ansi.Strip(s)
 		}
-		fmt.Println(s)
+		fmt.Fprintln(w, s)
 	}
-	fmt.Println("repo:  ", loadRepoInfo())
-	fmt.Printf("prefs:  layout=%s diff=%s ignore-whitespace=%v split-rows=%d split-columns=%d (%s)\n",
+	fmt.Fprintln(w, "repo:  ", loadRepoInfo())
+	fmt.Fprintf(w, "prefs:  layout=%s diff=%s ignore-whitespace=%v split-rows=%d split-columns=%d (%s)\n",
 		m.prefs.layout, m.prefs.diff, m.prefs.ignoreWS, m.prefs.splitRows, m.prefs.splitColumns, homeRel(prefsDir()))
 	if s := m.scope(); s != "" {
-		fmt.Println("scope: ", s)
+		fmt.Fprintln(w, "scope: ", s)
 	}
 	delta := m.deltaBin
 	if delta == "" {
 		delta = "not found (plain git colors)"
 	}
-	fmt.Println("delta: ", delta)
+	fmt.Fprintln(w, "delta: ", delta)
 	if m.hunkBin != "" {
-		fmt.Println("hunk:  ", m.hunkBin)
+		fmt.Fprintln(w, "hunk:  ", m.hunkBin)
 	}
-	fmt.Println("diffs:  by", m.tool().name)
+	fmt.Fprintln(w, "diffs:  by", m.tool().name)
 	if renderCache != nil {
-		fmt.Println("cache: ", homeRel(renderCache.dir))
+		fmt.Fprintln(w, "cache: ", homeRel(renderCache.dir))
 	}
 
 	for b := range streamLog(context.Background(), m.opts, m.logGen) {
@@ -128,7 +131,7 @@ func runDump(m *model, query, show string, limit, width int) int {
 				fmt.Fprintln(os.Stderr, "asgitlog:", msg.err)
 				return 1
 			}
-			fmt.Println(strings.Repeat("-", width))
+			fmt.Fprintln(w, strings.Repeat("-", width))
 			out(msg.render.content)
 			return 0
 		}
@@ -138,11 +141,11 @@ func runDump(m *model, query, show string, limit, width int) int {
 
 	m.ti.SetValue(query)
 	m.applyQuery()
-	fmt.Printf("commits: %d", len(m.commits))
+	fmt.Fprintf(w, "commits: %d", len(m.commits))
 	if m.filtering() {
-		fmt.Printf(", %d matching %q", m.rowCount(), query)
+		fmt.Fprintf(w, ", %d matching %q", m.rowCount(), query)
 	}
-	fmt.Println()
+	fmt.Fprintln(w)
 	layout := m.rowLayout()
 	layout.width = width
 	for i := 0; i < m.rowCount() && (limit <= 0 || i < limit); i++ {

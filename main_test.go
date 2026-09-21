@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -660,7 +662,7 @@ func TestStreamLogAndDetail(t *testing.T) {
 	}
 
 	ri := loadRepoInfo()
-	if real, _ := filepath.EvalSymlinks(dir); ri.Top != real || ri.Branch != "main" || ri.Upstream != "" || ri.WebURL != "" {
+	if real, _ := filepath.EvalSymlinks(dir); ri.Top != real || ri.Branch != "main" || ri.Upstream != "" || loadWebURL(ri.Upstream) != "" {
 		t.Errorf("repoInfo = %+v", ri)
 	}
 }
@@ -815,4 +817,93 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
+}
+
+// dumpLines runs -dump over the repository of gitRepo with a fresh model, the
+// way main builds it, and returns the exit code and the lines without colors
+// (runDump keeps them when the test's own stdout is a terminal).
+func dumpLines(t *testing.T, query string, limit int) (int, []string) {
+	t.Helper()
+	var out bytes.Buffer
+	code := runDump(&out, newModel(loadPrefs(), "", logOpts{}), query, "", limit, 100)
+	return code, strings.Split(strings.TrimRight(ansi.Strip(out.String()), "\n"), "\n")
+}
+
+// TestRunDump covers -dump: the repo and the settings on top, the commit
+// count, then a row per commit in the order of the log, cut at the limit.
+func TestRunDump(t *testing.T) {
+	gitRepo(t)
+	sandboxState(t)
+	code, lines := dumpLines(t, "", 0)
+	if code != 0 {
+		t.Fatalf("exit code %d", code)
+	}
+	if !strings.HasPrefix(lines[0], "repo:   ") || !strings.HasSuffix(lines[0], "  main") {
+		t.Errorf("first line %q, want the repo summary on main", lines[0])
+	}
+	count := slices.Index(lines, "commits: 5")
+	if count < 0 {
+		t.Fatalf("no commit count:\n%s", strings.Join(lines, "\n"))
+	}
+	head := strings.Join(lines[:count], "\n")
+	for _, want := range []string{"\nprefs:  layout=rows diff=auto ", "\ndelta:  not found", "\ndiffs:  by delta"} {
+		if !strings.Contains(head, want) {
+			t.Errorf("the summary misses %q:\n%s", want, head)
+		}
+	}
+	rows := lines[count+1:]
+	subjects := []string{"Merge branch 'side'", "empty one", "side work", "second commit", "first commit"}
+	if len(rows) != len(subjects) {
+		t.Fatalf("got %d rows, want one per commit:\n%s", len(rows), strings.Join(rows, "\n"))
+	}
+	for i, subject := range subjects {
+		if !strings.Contains(rows[i], " Ada "+subject+" ") || !strings.HasSuffix(rows[i], " 05/03/2026") {
+			t.Errorf("row %d is %q, want the author, %q and the date", i, rows[i], subject)
+		}
+	}
+	if !strings.Contains(rows[3], "tag: v1") {
+		t.Errorf("row %q misses its decoration", rows[3])
+	}
+
+	// -n cuts the rows, not the count.
+	_, lines = dumpLines(t, "", 2)
+	if count := slices.Index(lines, "commits: 5"); count < 0 || len(lines[count+1:]) != 2 {
+		t.Errorf("-n 2: want the count of the log and 2 rows:\n%s", strings.Join(lines, "\n"))
+	}
+}
+
+// TestRunDumpQuery covers -dump -query: the count line names the query and
+// how many commits match, and only those are listed. The list keeps the
+// log's order under a query (match.go), so there are no scores to print.
+func TestRunDumpQuery(t *testing.T) {
+	gitRepo(t)
+	sandboxState(t)
+	code, lines := dumpLines(t, "commit", 0)
+	count := slices.Index(lines, `commits: 5, 2 matching "commit"`)
+	if code != 0 || count < 0 {
+		t.Fatalf("exit code %d, want the count line with the query:\n%s", code, strings.Join(lines, "\n"))
+	}
+	rows := lines[count+1:]
+	if len(rows) != 2 || !strings.Contains(rows[0], " second commit ") || !strings.Contains(rows[1], " first commit ") {
+		t.Errorf("want the 2 matches, newest first, instead of the log:\n%s", strings.Join(rows, "\n"))
+	}
+
+	_, lines = dumpLines(t, "zzzz", 0)
+	if last := lines[len(lines)-1]; last != `commits: 5, 0 matching "zzzz"` {
+		t.Errorf("no match: last line %q, want the count and no rows", last)
+	}
+}
+
+// On a narrow popup it is the checkout that loses its head: the branch and
+// how far it is from its upstream are what change from one popup to the next.
+func TestRepoInfoLineFitsTheWidth(t *testing.T) {
+	t.Setenv("HOME", "/Users/x")
+	ri := repoInfo{Top: "/Users/x/dev/some/very/long/checkout/path/of/a/repo", Branch: "fix/login", Upstream: "origin/fix/login", Ahead: 2}
+	got := ri.line(60)
+	if n := len([]rune(got)); n > 60 || !strings.HasPrefix(got, "…") || !strings.HasSuffix(got, "fix/login -> origin/fix/login (ahead 2, behind 0)") {
+		t.Errorf("line(60) = %q (%d cells)", got, n)
+	}
+	if got := ri.line(0); got != ri.String() || strings.Contains(got, "…") {
+		t.Errorf("line(0) is the whole summary: %q", got)
+	}
 }

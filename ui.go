@@ -186,7 +186,17 @@ const (
 	modePickaxe
 )
 
-type repoInfoMsg repoInfo
+// repoInfoMsg is what is asked of git once, at start: the repo summary of the
+// context line and the web page of its remote (for ctrl+o).
+type repoInfoMsg struct {
+	repoInfo
+	WebURL string
+}
+
+func loadRepoInfoMsg() tea.Msg {
+	ri := loadRepoInfo()
+	return repoInfoMsg{repoInfo: ri, WebURL: loadWebURL(ri.Upstream)}
+}
 
 type model struct {
 	// data
@@ -199,8 +209,8 @@ type model struct {
 	logGen   int
 	logCh    <-chan logBatch
 	stopLog  context.CancelFunc
-	seekHash string // commit to land on again after the log restarted
-	info     string // repo summary line
+	seekHash string   // commit to land on again after the log restarted
+	info     repoInfo // the context line, fitted to the width when it is drawn
 	webURL   string
 
 	// filter
@@ -229,13 +239,11 @@ type model struct {
 	// preview
 	deltaBin string
 	hunkBin  string
-	renders  map[string]render
-	failed   map[string]string // render errors, so they are shown once instead of retried
+	queue    *renderQueue[render] // the renders: done, failed and under way (renderqueue.go)
 	details  map[string]detail
 	wantKey  string // render the active viewport should show
 	shownKey string // render whose final content it does show
-	inflight map[string]*pipeline
-	dir      int // direction of the last move: the prefetch looks further that way
+	dir      int    // direction of the last move: the prefetch looks further that way
 
 	// full-view search
 	searchTerm string
@@ -264,9 +272,7 @@ func newModel(p prefs, deltaBin string, opts logOpts) *model {
 		width:    120,
 		height:   40,
 		deltaBin: deltaBin,
-		inflight: map[string]*pipeline{},
-		renders:  map[string]render{},
-		failed:   map[string]string{},
+		queue:    newRenderQueue[render](),
 		details:  map[string]detail{},
 	}
 	m.ti.Focus()
@@ -526,37 +532,6 @@ func (m *model) activeVP() *viewport.Model {
 	return &m.prevVP
 }
 
-// A pipeline is a render in flight. A cancelled one is dying: it still counts
-// until it reports back.
-type pipeline struct {
-	cancel context.CancelFunc
-	dying  bool
-}
-
-const (
-	// maxPipelines bounds the renders running at once, dying ones included,
-	// so holding an arrow key never piles up processes: a selection that moved
-	// on cancels what it no longer needs and starts when that reports back.
-	maxPipelines = 3
-	// prefetchAhead is how many rows are rendered ahead in the direction of
-	// travel; the row behind the cursor is rendered too.
-	prefetchAhead = 4
-)
-
-// window is the rows worth having rendered besides the selected one, the most
-// useful first.
-func (m *model) window() []int {
-	d := m.dir
-	if d == 0 {
-		d = 1 // a fresh list is read downwards
-	}
-	rows := []int{m.cursor + d, m.cursor - d}
-	for i := 2; i <= prefetchAhead; i++ {
-		rows = append(rows, m.cursor+i*d)
-	}
-	return rows
-}
-
 // updatePreview points the active viewport at the selected commit: from the
 // render cache when possible, otherwise the instant header plus a placeholder
 // while the diff renders. Renders the selection left behind are cancelled
@@ -582,33 +557,34 @@ func (m *model) updatePreview() tea.Cmd {
 		m.clearSearch()
 		vp.GotoTop()
 	}
-	m.cancelStale(k, w, mode)
-	if r, ok := m.renders[k]; ok {
+	keep := m.wanted(k, w, mode)
+	m.queue.cancelStale(keep)
+	if r, ok := m.queue.get(k); ok { // a partial render counts
 		if m.shownKey != k {
 			m.shownKey = k
 			vp.SetContent(r.content)
 		}
-		return m.prefetch(w, mode)
+		return m.prefetch(keep, w, mode)
 	}
 	var d *detail
 	if known, ok := m.details[c.hash]; ok {
 		d = &known
 	}
-	if msg, ok := m.failed[k]; ok {
+	if msg, ok := m.queue.failed[k]; ok {
 		m.shownKey = k
-		vp.SetContent(previewHeader(c, d, w) + "\n\n" + stError.Render(msg))
-		return nil
+		vp.SetContent(previewHeader(c, d, w) + "\n\n" + errorBlock(msg, w))
+		return m.prefetch(keep, w, mode)
 	}
 	m.shownKey = ""
 	vp.SetContent(previewHeader(c, d, w) + "\n\n" + stDim.Render("rendering…"))
-	return m.startRender(c, w, mode, true)
+	return m.startRender(c, keep, w, mode, true)
 }
 
-// windowKeys are the render keys of the selection and its window, the most
-// wanted first.
-func (m *model) windowKeys(want string, w int, mode string) []string {
+// wanted is the render keys worth having, the most wanted first: the
+// selection's, then the rows around it (renderWindow).
+func (m *model) wanted(want string, w int, mode string) []string {
 	keys := []string{want}
-	for _, i := range m.window() {
+	for _, i := range renderWindow(m.cursor, m.dir) {
 		if c, _ := m.rowAt(i); c != nil {
 			keys = append(keys, previewKey(c.hash, w, m.tool(), mode))
 		}
@@ -616,110 +592,41 @@ func (m *model) windowKeys(want string, w int, mode string) []string {
 	return keys
 }
 
-// cancelStale cancels the renders nobody is waiting for anymore.
-func (m *model) cancelStale(want string, w int, mode string) {
-	if len(m.inflight) == 0 {
-		return
-	}
-	keys := m.windowKeys(want, w, mode)
-	for k, p := range m.inflight {
-		if !p.dying && !slices.Contains(keys, k) {
-			p.cancel()
-			p.dying = true
-		}
-	}
-}
-
-// startRender starts a render unless it is in flight already (a dying one
-// starts again when it reports back: updatePreview runs on every report).
-// When every slot is taken the wanted render takes the least wanted one's,
-// once that has reported back; a prefetch just waits for a free slot.
-func (m *model) startRender(c *commit, w int, mode string, wanted bool) tea.Cmd {
-	k := previewKey(c.hash, w, m.tool(), mode)
-	if m.inflight[k] != nil {
+// startRender starts the render of c when the queue has a slot for it.
+func (m *model) startRender(c *commit, keep []string, w int, mode string, wanted bool) tea.Cmd {
+	ctx := m.queue.start(previewKey(c.hash, w, m.tool(), mode), keep, wanted)
+	if ctx == nil {
 		return nil
 	}
-	if len(m.inflight) >= maxPipelines {
-		dying := false
-		for _, p := range m.inflight {
-			dying = dying || p.dying
-		}
-		if wanted && !dying { // a dying render frees its slot in a moment
-			keys := m.windowKeys(k, w, mode)
-			for i := len(keys) - 1; i > 0; i-- {
-				if p := m.inflight[keys[i]]; p != nil && !p.dying {
-					p.cancel()
-					p.dying = true
-					break
-				}
-			}
-		}
-		return nil
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	m.inflight[k] = &pipeline{cancel: cancel}
 	return renderPreviewCmd(ctx, *c, w, mode, m.tool(), m.opts.paths)
 }
 
 // prefetch renders the window around the cursor in the free slots.
-func (m *model) prefetch(w int, mode string) tea.Cmd {
+func (m *model) prefetch(keep []string, w int, mode string) tea.Cmd {
 	var cmds []tea.Cmd
-	for _, i := range m.window() {
-		if len(m.inflight) >= maxPipelines {
+	for _, i := range renderWindow(m.cursor, m.dir) {
+		if !m.queue.free() {
 			break
 		}
-		c, _ := m.rowAt(i)
-		if c == nil {
-			continue
+		if c, _ := m.rowAt(i); c != nil && !m.queue.settled(previewKey(c.hash, w, m.tool(), mode)) {
+			cmds = append(cmds, m.startRender(c, keep, w, mode, false))
 		}
-		k := previewKey(c.hash, w, m.tool(), mode)
-		if _, ok := m.renders[k]; ok {
-			continue
-		}
-		if _, ok := m.failed[k]; ok {
-			continue
-		}
-		cmds = append(cmds, m.startRender(c, w, mode, false))
 	}
 	return tea.Batch(cmds...)
 }
 
-// maxRenders bounds the render cache; it is simply dropped when full (the
-// current commit re-renders in milliseconds).
-const maxRenders = 128
-
 func (m *model) handlePreview(msg previewMsg) tea.Cmd {
-	// A partial render is shown while its pipeline goes on: it stays in flight
-	// until what follows reports back.
-	if p := m.inflight[msg.key]; p != nil && msg.next == nil {
-		p.cancel()
-		delete(m.inflight, msg.key)
-	}
 	if msg.key == m.shownKey {
 		m.shownKey = "" // showing the partial render this one replaces
 	}
-	partial := m.renders[msg.key].partial
-	switch {
-	case msg.cancelled:
-		// updatePreview starts whatever is wanted now (possibly this same
-		// render again, after an A, B, A selection). A partial render is not
-		// worth keeping: it would never get refined.
-		if partial {
-			delete(m.renders, msg.key)
-		}
-	case msg.err != nil && partial:
-		// hunk died on the way: what it had drawn is as good as it gets.
-		r := m.renders[msg.key]
-		r.partial = false
-		m.renders[msg.key] = r
-	case msg.err != nil:
-		m.failed[msg.key] = msg.err.Error()
-	default:
-		if len(m.renders) >= maxRenders {
-			m.renders, m.details, m.failed = map[string]render{}, map[string]detail{}, map[string]string{}
-			m.shownKey = ""
-		}
-		m.renders[msg.key] = msg.render
+	// A partial render is shown while its pipeline goes on: it stays in flight
+	// until what follows reports back. updatePreview then starts whatever is
+	// wanted now (possibly this same render again, after an A, B, A selection).
+	if m.queue.report(msg.key, msg.render, msg.partial, msg.next == nil, msg.cancelled, msg.err) {
+		m.details = map[string]detail{} // the renders were dropped to make room
+		m.shownKey = ""
+	}
+	if !msg.cancelled && msg.err == nil {
 		m.details[msg.hash] = msg.detail
 	}
 	return tea.Batch(msg.next, m.updatePreview())
@@ -735,7 +642,7 @@ func (m *model) resetPreview() tea.Cmd {
 // jumpFile scrolls the active viewport to the next (or previous) file of the
 // diff.
 func (m *model) jumpFile(dir int) {
-	r, ok := m.renders[m.wantKey]
+	r, ok := m.queue.get(m.wantKey)
 	if !ok || len(r.files) == 0 {
 		return
 	}
@@ -776,7 +683,7 @@ func (m *model) clearSearch() {
 // like delta's.
 func (m *model) runSearch(term string) {
 	m.clearSearch()
-	r, ok := m.renders[m.wantKey]
+	r, ok := m.queue.get(m.wantKey)
 	if term == "" || !ok {
 		if ok {
 			m.fullVP.SetContent(r.content)
@@ -888,7 +795,7 @@ func (m *model) setOption(id string, v int) tea.Cmd {
 		if flash == "" {
 			return nil
 		}
-		return m.setFlash(flash)
+		return m.flash.fail(flash) // the option could not change
 	}
 	m.prefs.tool, m.prefs.diff, m.prefs.ignoreWS = p.tool, p.mode, p.ignoreWS
 	switch id { // only what changed is written: a setting never chosen stays unset
@@ -938,14 +845,14 @@ func (m *model) browse() tea.Cmd {
 	c := m.current()
 	switch {
 	case c == nil || c.wt:
-		return m.setFlash("nothing to open")
+		return m.flash.fail("nothing to open")
 	case m.webURL == "":
-		return m.setFlash("no remote with a web URL")
+		return m.flash.fail("no remote with a web URL")
 	}
 	url := commitURL(m.webURL, c.hash)
 	return func() tea.Msg {
 		if err := openURL("asgitlog", url); err != nil {
-			return flashMsg("open failed: " + err.Error())
+			return flashErrMsg("open failed: " + err.Error())
 		}
 		return flashMsg("opened " + url)
 	}
@@ -954,7 +861,7 @@ func (m *model) browse() tea.Cmd {
 // ---- bubbletea ----
 
 func (m *model) Init() tea.Cmd {
-	return tea.Batch(textinput.Blink, func() tea.Msg { return repoInfoMsg(loadRepoInfo()) }, m.startLog())
+	return tea.Batch(textinput.Blink, loadRepoInfoMsg, m.startLog())
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -965,7 +872,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.updatePreview()
 
 	case repoInfoMsg:
-		m.info, m.webURL = repoInfo(msg).String(), msg.WebURL
+		m.info, m.webURL = msg.repoInfo, msg.WebURL
 		return m, nil
 
 	case logBatch:
@@ -994,6 +901,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case flashMsg:
 		return m, m.setFlash(string(msg))
+
+	case flashErrMsg:
+		return m, m.flash.fail(string(msg))
 
 	case clearFlashMsg:
 		m.flash.clear(msg)
@@ -1053,9 +963,7 @@ func (m *model) quit() tea.Cmd {
 	if m.stopLog != nil {
 		m.stopLog()
 	}
-	for _, p := range m.inflight {
-		p.cancel()
-	}
+	m.queue.cancelStale(nil)
 	return tea.Quit
 }
 
@@ -1272,7 +1180,7 @@ func (m *model) listView() string {
 	}
 	out := []string{
 		hline(w, "╭", "╮", "", ""),
-		framed(w, stInfo.Render(m.info)),
+		framed(w, stInfo.Render(m.info.line(max(0, w-4)))),
 		hline(w, "├", "┤", "", withDevMark(m.status())),
 		framed(w, input),
 	}
