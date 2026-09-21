@@ -351,7 +351,7 @@ func TestFilterFlow(t *testing.T) {
 		t.Error("clearing the query must stay on the selected commit")
 	}
 	typeText(m, "zzzz")
-	if m.current() != nil || !strings.Contains(screen(m), "no matching commits") {
+	if m.current() != nil || !strings.Contains(screen(m), "No matches") {
 		t.Errorf("empty result not handled:\n%s", screen(m))
 	}
 }

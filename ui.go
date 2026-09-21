@@ -1348,9 +1348,9 @@ func (m *model) listLines() []string {
 		case m.logErr != "":
 			msg = " " + stError.Render(truncate(m.logErr, l.width-1))
 		case m.filtering() || m.opts.pickaxe != "" && !m.loading:
-			msg = stDim.Render("  no matching commits")
+			msg = emptyList("", "filtered", "", l.width) // the query or the -S scope matches nothing
 		case !m.loading:
-			msg = stDim.Render("  no commits")
+			msg = emptyList("", "", "No commits", l.width)
 		}
 		lines = append(lines, fit(msg, l.width))
 	}
