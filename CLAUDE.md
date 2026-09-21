@@ -41,6 +41,9 @@ are split by concern but everything stays in `package main`:
   tool of the family.
 - `text.go`: `truncate`, `padRight`, `padLeft`: fitting text, styled or not,
   into cells. The same file in every tool of the family.
+- `setting.go`: `loadSetting`, `saveSetting`, a setting the tool remembers,
+  one plain-text file each in the state dir; `prefs.go` reads and writes
+  through it. The same file in every tool of the family that needs it.
 - `listmouse.go`: `inList`, `rowUnder`, `wheelKey`: the mouse over the list.
   The wheel goes through the same code as the arrows; a click moves the
   cursor and never opens anything. The same file in every tool of the family.
@@ -183,7 +186,7 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   While it is on, `[-w]` stands on the main section's bottom edge before the
   scroll position (`diffEdge`) and next to the diff mode in the full view's
   title.
-- **hunk as an alternative renderer** (the panel's first option, setting `renderer`, only
+- **hunk or delta as the renderer** (the panel's first option, setting `renderer`; hunk is the family's default, only
   when `hunk` is in `PATH`; a saved `hunk` without the binary falls back to
   delta). Only its looks are wanted. hunk has NO static output (`hunk pager`
   passes the patch through when stdout is not a tty, `hunk patch` starts its
@@ -284,9 +287,9 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   overlay that only restyled the key list was tried and dropped; this one
   earns its place with the options. The filter's `~word` hint lives on as a
   help-only binding.
-- **Settings** (`layout`, `diff`, `renderer`, `whitespace`, `split-rows`,
-  `split-columns`)
-  are one plain-text file each under the family's state directory
+- **Settings** (`layout`, `diff`, `renderer`, `whitespace`, `refs`,
+  `split-rows`, `split-columns`)
+  are one plain-text file each (`setting.go`, shared with the family) under the family's state directory
   (`stateDirFor`, the shared `statedir.go`; `migratePrefs` copies the ones from
   the old `${XDG_STATE_HOME:-~/.local/state}/asgitlog/` once),
   not the herdr plugin state dir: the popup and the shell binary share them.

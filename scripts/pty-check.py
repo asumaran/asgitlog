@@ -40,6 +40,8 @@ def file_txt(i):
     return "".join("line %02d of revision %02d\n" % (n, i if n % 10 == i % 10 else 0) for n in range(80))
 
 os.makedirs(REPO); os.makedirs(os.path.join(STATE, "asgitlog"))
+# hunk is the default renderer; these checks read delta's output, so delta is the saved choice.
+with open(os.path.join(STATE, "asgitlog", "renderer"), "w") as f: f.write("delta")
 git("init", "-q", "-b", "main")
 git("remote", "add", "origin", "git@github.com:acme/widgets.git")
 for i in range(LINEAR):

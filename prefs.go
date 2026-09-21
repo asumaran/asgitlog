@@ -27,6 +27,7 @@ type prefs struct {
 	splitRows    int  // preview height, percent of the body
 	splitColumns int  // preview width, percent of the screen
 	ignoreWS     bool // git's -w: changes in whitespace are left out of the diffs
+	allRefs      bool // the log of every ref (--all), not only the current branch's
 }
 
 // prefsDir is where the settings live: the state directory every tool of the
@@ -70,22 +71,9 @@ func migratePrefs() {
 	}
 }
 
-func readPref(name string) string {
-	data, err := os.ReadFile(filepath.Join(prefsDir(), name))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}
+func readPref(name string) string { return loadSetting(prefsDir(), name) }
 
-// savePref is best effort: a read-only state dir only costs the persistence.
-func savePref(name, value string) {
-	dir := prefsDir()
-	if dir == "" || os.MkdirAll(dir, 0o755) != nil {
-		return
-	}
-	_ = os.WriteFile(filepath.Join(dir, name), []byte(value+"\n"), 0o644)
-}
+func savePref(name, value string) { saveSetting(prefsDir(), name, value) }
 
 func readSplit(name string, def int) int {
 	n, err := strconv.Atoi(readPref(name))
@@ -100,7 +88,7 @@ func loadPrefs() prefs {
 	p := prefs{
 		layout:       layoutRows,
 		diff:         diffAuto,
-		tool:         toolDelta,
+		tool:         toolHunk, // the family's default; delta when hunk is missing (pickTool)
 		splitRows:    readSplit("split-rows", 70),
 		splitColumns: readSplit("split-columns", 75), // list 25%, details 75%
 	}
@@ -110,9 +98,10 @@ func loadPrefs() prefs {
 	if d := readPref("diff"); d == diffSBS || d == diffSingle {
 		p.diff = d
 	}
-	if readPref("renderer") == toolHunk {
-		p.tool = toolHunk
+	if readPref("renderer") == toolDelta {
+		p.tool = toolDelta
 	}
 	p.ignoreWS = readPref("whitespace") == "ignore"
+	p.allRefs = readPref("refs") == "all"
 	return p
 }

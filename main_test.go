@@ -396,15 +396,15 @@ func TestRenderSegsHighlightsMatchedBytes(t *testing.T) {
 
 func TestPrefsRoundTrip(t *testing.T) {
 	sandboxState(t)
-	if p := loadPrefs(); p != (prefs{layout: layoutRows, diff: diffAuto, tool: toolDelta, splitRows: 70, splitColumns: 75}) {
+	if p := loadPrefs(); p != (prefs{layout: layoutRows, diff: diffAuto, tool: toolHunk, splitRows: 70, splitColumns: 75}) {
 		t.Errorf("defaults = %+v", p)
 	}
 	savePref("layout", layoutColumns)
 	savePref("diff", diffSingle)
 	savePref("split-rows", "55")
 	savePref("split-columns", "80")
-	savePref("renderer", toolHunk)
-	if p := loadPrefs(); p != (prefs{layout: layoutColumns, diff: diffSingle, tool: toolHunk, splitRows: 55, splitColumns: 80}) {
+	savePref("renderer", toolDelta)
+	if p := loadPrefs(); p != (prefs{layout: layoutColumns, diff: diffSingle, tool: toolDelta, splitRows: 55, splitColumns: 80}) {
 		t.Errorf("after save = %+v", p)
 	}
 	// inside herdr the settings live where herdr says; alone, in that same place

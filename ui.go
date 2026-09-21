@@ -248,6 +248,11 @@ type model struct {
 }
 
 func newModel(p prefs, deltaBin string, opts logOpts) *model {
+	// The remembered scope is for the plain log: revisions given on the
+	// command line say what to list themselves.
+	if p.allRefs && len(opts.revs) == 0 {
+		opts.all = true
+	}
 	m := &model{
 		opts:     opts,
 		loading:  true,
@@ -870,8 +875,7 @@ func (m *model) options() []option {
 	)
 }
 
-// setOption changes a setting, remembers it (the log's scope is per run) and
-// says so. The keys and the panel both come through here.
+// setOption changes a setting, remembers it and says so. The keys and the panel both come through here.
 func (m *model) setOption(id string, v int) tea.Cmd {
 	switch id {
 	case "renderer":
@@ -907,6 +911,11 @@ func (m *model) setOption(id string, v int) tea.Cmd {
 		return m.updatePreview()
 	case "refs":
 		m.opts.all = v == 1
+		value := "current"
+		if m.opts.all {
+			value = "all"
+		}
+		savePref("refs", value)
 		return m.startLog()
 	}
 	return nil

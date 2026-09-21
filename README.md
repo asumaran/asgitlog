@@ -18,8 +18,8 @@ the pane you were in, and as a plain command in any shell.
 - Uncommitted changes show up as a row of their own above the newest commit.
 - The log can be widened to all refs, or narrowed to the commits that added
   or removed a piece of text (`git log -S`).
-- The layout, the diff mode and the size of the list are remembered across
-  runs.
+- Every option (renderer, diff mode, whitespace, layout, all refs) and the
+  size of the list are remembered across runs.
 
 ## Install
 
@@ -77,11 +77,11 @@ down the history.
 | mouse wheel over the list | move the selection |
 | left click | select a commit |
 | `ctrl+t` | diff mode: auto, side-by-side, single column |
-| panel: Diff renderer | render the diffs with delta or with [hunk](https://hunk.dev) (when installed) |
+| panel: Diff renderer | render the diffs with [hunk](https://hunk.dev), the default, or with delta (remembered; delta also stands in while hunk is not installed) |
 | `ctrl+s` | show or ignore whitespace changes, like GitHub's "Hide whitespace" (`git show -w`, remembered); `[-w]` on the bottom edge while it is on |
 | panel: Layout | preview below (rows) / on the side (columns) |
 | `shift+←`/`shift+→` | shrink / grow the list |
-| `ctrl+a` | all refs / current branch |
+| `ctrl+a` | all refs / current branch (remembered; revisions on the command line go before it) |
 | `ctrl+g` | search the diffs: only commits that add or remove a text |
 | `ctrl+y` | copy the commit hash |
 | `ctrl+o` | open the commit on the remote's web page |

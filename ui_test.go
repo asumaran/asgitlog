@@ -764,24 +764,32 @@ func TestBackToTheNewestCommit(t *testing.T) {
 
 func TestToggleTool(t *testing.T) {
 	m := testModel(t, 5)
+	// hunk is the default, and delta stands in for it while it is missing.
+	if m.prefs.tool != toolHunk || m.tool().name != toolDelta {
+		t.Fatalf("default: pref=%q tool=%q", m.prefs.tool, m.tool().name)
+	}
 	press(m, "f1", "space", "esc") // the renderer is the panel's first option
 	if m.flash.text != "hunk not found" || m.tool().name != toolDelta || pref("renderer") != "" {
 		t.Errorf("without hunk: flash=%q tool=%q pref=%q", m.flash.text, m.tool().name, pref("renderer"))
 	}
 	m.hunkBin = "/usr/bin/hunk"
-	delta := m.wantKey
+	if m.tool() != (diffTool{name: toolHunk, bin: "/usr/bin/hunk"}) {
+		t.Fatalf("with hunk installed it renders the diffs: %+v", m.tool())
+	}
+	m.updatePreview()
+	hunk := m.wantKey
 	press(m, "f1", "space", "esc")
-	if m.tool() != (diffTool{name: toolHunk, bin: "/usr/bin/hunk"}) || pref("renderer") != toolHunk || m.flash.text != "diffs by hunk" ||
-		m.wantKey == delta || !strings.Contains(m.wantKey, "|hunk|") {
+	if m.tool().name != toolDelta || pref("renderer") != toolDelta || m.flash.text != "diffs by delta" ||
+		m.wantKey == hunk || !strings.Contains(m.wantKey, "|delta|") {
 		t.Errorf("the panel: tool=%+v pref=%q flash=%q key=%q", m.tool(), pref("renderer"), m.flash.text, m.wantKey)
 	}
 	// Renders are cached per tool, so going back needs no new render.
 	press(m, "enter", "?", "left", "esc", "esc")
-	if m.tool().name != toolDelta || pref("renderer") != toolDelta || m.wantKey != delta || m.mode != modeList {
-		t.Errorf("the panel in the full view, and back: tool=%q key=%q want %q", m.tool().name, m.wantKey, delta)
+	if m.tool().name != toolHunk || pref("renderer") != toolHunk || m.wantKey != hunk || m.mode != modeList {
+		t.Errorf("the panel in the full view, and back: tool=%q key=%q want %q", m.tool().name, m.wantKey, hunk)
 	}
-	// A saved hunk setting without hunk installed falls back to delta.
-	m.prefs.tool, m.hunkBin = toolHunk, ""
+	// A hunk setting without hunk installed falls back to delta.
+	m.hunkBin = ""
 	if m.tool().name != toolDelta {
 		t.Errorf("hunk gone: tool=%q", m.tool().name)
 	}
@@ -874,5 +882,25 @@ func TestWhitespaceToggle(t *testing.T) {
 	press(m, "esc", "ctrl+s", "enter", "ctrl+s")
 	if m.prefs.ignoreWS || pref("whitespace") != "show" || loadPrefs().ignoreWS {
 		t.Errorf("the full view toggles it too: ignoreWS=%v saved=%q", m.prefs.ignoreWS, pref("whitespace"))
+	}
+}
+
+// TestAllRefsIsRemembered: the log's scope is a setting like the others, kept
+// for the next run, and revisions on the command line go before it.
+func TestAllRefsIsRemembered(t *testing.T) {
+	m := testModel(t, 3)
+	press(m, "ctrl+a")
+	if !m.opts.all || pref("refs") != "all" {
+		t.Fatalf("ctrl+a: all=%v pref=%q", m.opts.all, pref("refs"))
+	}
+	if n := newModel(loadPrefs(), "", logOpts{}); !n.opts.all {
+		t.Error("the next run should list all refs again")
+	}
+	if n := newModel(loadPrefs(), "", logOpts{revs: []string{"main"}}); n.opts.all {
+		t.Error("revisions on the command line say what to list")
+	}
+	press(m, "ctrl+a")
+	if m.opts.all || pref("refs") != "current" || loadPrefs().allRefs {
+		t.Errorf("ctrl+a again: all=%v pref=%q", m.opts.all, pref("refs"))
 	}
 }
