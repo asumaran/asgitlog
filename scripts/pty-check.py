@@ -161,7 +161,8 @@ failures = []
 # Without delta the diffs are git's own: the mode change is flashed as a notice
 # and a file starts at its "diff --git" line instead of delta's header.
 DELTA = shutil.which("delta") is not None
-def flash(label): return ("│ diff: %s " % label) if DELTA else "│ delta not found"
+RENDERER = DELTA or shutil.which("hunk") is not None
+def flash(label): return ("│ diff: %s " % label) if RENDERER else "│ no renderer found: plain git colors"
 def filehead(name): return name if DELTA else "diff --git a/" + name
 
 def check(cond, msg):
