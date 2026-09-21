@@ -1,11 +1,11 @@
 package main
 
 // The commit preview: a natively rendered header (hash, refs, author, date,
-// stat, message, changed files) followed by the diff as rendered by delta.
-// Diff rendering is delegated on purpose: `git show | delta --width=N
-// [--side-by-side]` and the ANSI output goes into a viewport as is. A render
-// can take a while on large commits, so it runs as a tea.Cmd and results are
-// cached per (commit, width, diff mode).
+// stat, message, changed files) followed by the diff as rendered by hunk or
+// delta (difftool.go). Diff rendering is delegated on purpose: the patch of
+// `git show` goes to the renderer and its ANSI output into a viewport as is.
+// A render can take a while on large commits, so it runs as a tea.Cmd and
+// results are cached per (commit, width, renderer, diff mode with -w).
 
 import (
 	"context"
@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	// maxDiffBytes caps the rendered diff kept in memory; a vendored-dependency
-	// commit can otherwise produce hundreds of megabytes of ANSI.
+	// maxDiffBytes caps what is read from git and from delta (limitedOutput); a
+	// vendored-dependency commit can otherwise produce hundreds of megabytes.
 	maxDiffBytes = 16 << 20
 	// maxHeaderFiles caps the changed-files (and untracked) list of the
 	// header; past that the list would bury the diff.

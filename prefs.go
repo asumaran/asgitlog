@@ -1,10 +1,12 @@
 package main
 
-// Persisted settings, one plain-text file per setting under
-// ${XDG_STATE_HOME:-~/.local/state}/asgitlog: the layout (rows|columns), the
-// diff mode (auto|sbs|single) and the preview's share of the screen in each
-// layout. The location is deliberately not the herdr plugin state dir: the
-// same binary runs as a popup and from a plain shell, and both share them.
+// Persisted settings, one plain-text file per setting (setting.go) in the
+// family's state directory (statedir.go): the layout (rows|columns), the diff
+// mode (auto|sbs|single), the renderer (hunk|delta), the whitespace
+// (show|ignore), the log's scope (current|all) and the preview's share of the
+// screen in each layout. The popup and a plain shell run resolve the same
+// directory, so both share them. migratePrefs copies the settings of the old
+// location, ~/.local/state/asgitlog, once.
 
 import (
 	"os"

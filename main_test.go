@@ -802,3 +802,17 @@ func TestPrefsMigrateOnce(t *testing.T) {
 		t.Errorf("a later run must not copy the old settings again: %+v", p)
 	}
 }
+
+// TestMain sandboxes the state dir: tests must never touch the real one, even
+// one that forgets to set it.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "asgitlog-test")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
+	os.Setenv("XDG_CACHE_HOME", dir)
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}

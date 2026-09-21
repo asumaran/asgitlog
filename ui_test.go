@@ -333,7 +333,7 @@ func TestFilterFlow(t *testing.T) {
 	if edge := edges(m)[0]; !strings.HasSuffix(edge, "─ 12/200 ─┤") {
 		t.Errorf("counter on the edge under the list: %q", edge)
 	}
-	if line := lines(m)[counterY]; !strings.HasSuffix(line, "── (dev) ─┤") { // tests run an unstamped build
+	if line := lines(m)[statusY]; !strings.HasSuffix(line, "── (dev) ─┤") { // tests run an unstamped build
 		t.Errorf("edge over the input: %q", line)
 	}
 	press(m, "down")
@@ -668,7 +668,7 @@ func TestScopeAndPickaxeInput(t *testing.T) {
 	if m.mode != modeList || m.opts.pickaxe != "" || m.logGen != 0 {
 		t.Errorf("esc cancels: mode=%v pickaxe=%q gen=%d", m.mode, m.opts.pickaxe, m.logGen)
 	}
-	if s := lines(m)[counterY]; !strings.HasSuffix(s, "── [-- src] (dev) ─┤") {
+	if s := lines(m)[statusY]; !strings.HasSuffix(s, "── [-- src] (dev) ─┤") {
 		t.Errorf("scope on the edge over the input: %q", s)
 	}
 }
@@ -684,15 +684,6 @@ func TestLogErrorAndFatal(t *testing.T) {
 	press(m, "enter") // nothing selected: must not open the full view
 	if m.mode != modeList {
 		t.Error("enter without a commit should do nothing")
-	}
-
-	f := newModel(loadPrefs(), "", logOpts{})
-	f.mode, f.fatal = modeFatal, "not inside a git work tree: /tmp"
-	if !strings.Contains(screen(f), "not inside a git work tree") {
-		t.Errorf("fatal view:\n%s", screen(f))
-	}
-	if _, cmd := f.Update(tea.KeyPressMsg{Code: 'x', Text: "x"}); cmd == nil {
-		t.Error("any key should quit the fatal view")
 	}
 }
 
@@ -764,32 +755,34 @@ func TestBackToTheNewestCommit(t *testing.T) {
 
 func TestToggleTool(t *testing.T) {
 	m := testModel(t, 5)
+	m.deltaBin = "/usr/bin/delta"
 	// hunk is the default, and delta stands in for it while it is missing.
 	if m.prefs.tool != toolHunk || m.tool().name != toolDelta {
 		t.Fatalf("default: pref=%q tool=%q", m.prefs.tool, m.tool().name)
 	}
-	press(m, "f1", "space", "esc") // the renderer is the panel's first option
-	if m.flash.text != "hunk not found" || m.tool().name != toolDelta || pref("renderer") != "" {
-		t.Errorf("without hunk: flash=%q tool=%q pref=%q", m.flash.text, m.tool().name, pref("renderer"))
+	m.updatePreview()
+	delta := m.wantKey
+	press(m, "f1", "space", "esc") // the renderer is the panel's first option: hunk -> delta
+	if m.flash.text != "diffs by delta" || pref("renderer") != toolDelta || m.wantKey != delta {
+		t.Errorf("delta can be chosen without hunk: flash=%q pref=%q", m.flash.text, pref("renderer"))
+	}
+	press(m, "f1", "space", "esc") // and back to hunk, which is not installed
+	if m.flash.text != "hunk not found" || pref("renderer") != toolDelta {
+		t.Errorf("without hunk: flash=%q pref=%q", m.flash.text, pref("renderer"))
 	}
 	m.hunkBin = "/usr/bin/hunk"
-	if m.tool() != (diffTool{name: toolHunk, bin: "/usr/bin/hunk"}) {
-		t.Fatalf("with hunk installed it renders the diffs: %+v", m.tool())
-	}
-	m.updatePreview()
-	hunk := m.wantKey
 	press(m, "f1", "space", "esc")
-	if m.tool().name != toolDelta || pref("renderer") != toolDelta || m.flash.text != "diffs by delta" ||
-		m.wantKey == hunk || !strings.Contains(m.wantKey, "|delta|") {
+	if m.tool() != (diffTool{name: toolHunk, bin: "/usr/bin/hunk"}) || pref("renderer") != toolHunk || m.flash.text != "diffs by hunk" ||
+		m.wantKey == delta || !strings.Contains(m.wantKey, "|hunk|") {
 		t.Errorf("the panel: tool=%+v pref=%q flash=%q key=%q", m.tool(), pref("renderer"), m.flash.text, m.wantKey)
 	}
 	// Renders are cached per tool, so going back needs no new render.
 	press(m, "enter", "?", "left", "esc", "esc")
-	if m.tool().name != toolHunk || pref("renderer") != toolHunk || m.wantKey != hunk || m.mode != modeList {
-		t.Errorf("the panel in the full view, and back: tool=%q key=%q want %q", m.tool().name, m.wantKey, hunk)
+	if m.tool().name != toolDelta || pref("renderer") != toolDelta || m.wantKey != delta || m.mode != modeList {
+		t.Errorf("the panel in the full view, and back: tool=%q key=%q want %q", m.tool().name, m.wantKey, delta)
 	}
 	// A hunk setting without hunk installed falls back to delta.
-	m.hunkBin = ""
+	m.prefs.tool, m.hunkBin = toolHunk, ""
 	if m.tool().name != toolDelta {
 		t.Errorf("hunk gone: tool=%q", m.tool().name)
 	}
@@ -902,5 +895,20 @@ func TestAllRefsIsRemembered(t *testing.T) {
 	press(m, "ctrl+a")
 	if m.opts.all || pref("refs") != "current" || loadPrefs().allRefs {
 		t.Errorf("ctrl+a again: all=%v pref=%q", m.opts.all, pref("refs"))
+	}
+}
+
+// TestPasteFilters: a paste changes the query without a key press, and the
+// list must follow it; under the panel and in the full view it is dropped.
+func TestPasteFilters(t *testing.T) {
+	m := testModel(t, 5)
+	m.Update(tea.PasteMsg{Content: "zzzzqq"})
+	if m.ti.Value() != "zzzzqq" || m.current() != nil || !strings.Contains(screen(m), "No matches") {
+		t.Fatalf("a paste should filter: query %q\n%s", m.ti.Value(), screen(m))
+	}
+	m.panel.open = true
+	m.Update(tea.PasteMsg{Content: "xx"})
+	if m.ti.Value() != "zzzzqq" {
+		t.Errorf("a paste under the panel should be dropped, the query is %q", m.ti.Value())
 	}
 }

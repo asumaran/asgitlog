@@ -57,14 +57,7 @@ func main() {
 
 	if !insideWorkTree() {
 		cwd, _ := os.Getwd()
-		msg := "not inside a git work tree: " + homeRel(cwd)
-		// A popup closes with the process and takes stderr with it, so the
-		// error has to be shown inside the TUI there.
-		if *dump || os.Getenv("HERDR_PLUGIN_ENTRYPOINT_ID") == "" {
-			fmt.Fprintln(os.Stderr, "asgitlog: "+msg)
-			os.Exit(1)
-		}
-		m.mode, m.fatal = modeFatal, msg
+		fatal("asgitlog", "not inside a git work tree: "+homeRel(cwd))
 	}
 
 	if *dump {
@@ -75,9 +68,6 @@ func main() {
 	// The log stream starts in Init. Alt screen and mouse mode are declared per frame by View().
 	if _, err := tea.NewProgram(m).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	if m.mode == modeFatal {
 		os.Exit(1)
 	}
 }

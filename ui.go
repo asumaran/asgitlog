@@ -77,7 +77,7 @@ type listKeys struct {
 }
 
 func (k listKeys) ShortHelp() []key.Binding {
-	return []key.Binding{k.Filter, k.Nav.Up, k.Nav.Top, k.Open, k.DiffMode, k.Help, k.Quit}
+	return []key.Binding{k.Filter, k.Open, k.DiffMode, k.Space, k.Help, k.Quit}
 }
 
 // FullHelp is the panel's list of keys: bubbles lays each group out as a
@@ -111,11 +111,11 @@ func defaultListKeys() listKeys {
 		Grow:     key.NewBinding(key.WithKeys("shift+right")),
 		All:      key.NewBinding(key.WithKeys("ctrl+a"), key.WithHelp("^a", "all refs / current branch")),
 		Pickaxe:  key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("^g", "search the diffs (git log -S)")),
-		Space:    key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("^s", "show / ignore whitespace")),
+		Space:    key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("^s", "whitespace")),
 		Copy:     key.NewBinding(key.WithKeys("ctrl+y"), key.WithHelp("^y", "copy the hash")),
 		Browse:   key.NewBinding(key.WithKeys("ctrl+o"), key.WithHelp("^o", "open the commit in the browser")),
 		Help:     helpBinding(true),
-		Quit:     key.NewBinding(key.WithKeys("esc", "ctrl+c"), key.WithHelp("esc/q", "quit")),
+		Quit:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc/q", "quit")),
 	}
 }
 
@@ -137,7 +137,6 @@ type fullKeys struct {
 	Browse   key.Binding
 	Help     key.Binding
 	Back     key.Binding
-	Quit     key.Binding
 }
 
 func (k fullKeys) ShortHelp() []key.Binding {
@@ -167,13 +166,12 @@ func defaultFullKeys() fullKeys {
 		Next:     key.NewBinding(key.WithKeys("n"), key.WithHelp("n/N", "next / previous match")),
 		Prev:     key.NewBinding(key.WithKeys("N")),
 		DiffMode: key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("^t", "diff mode")),
-		Space:    key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("^s", "show / ignore whitespace")),
+		Space:    key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("^s", "whitespace")),
 		Copy:     key.NewBinding(key.WithKeys("y", "ctrl+y"), key.WithHelp("y", "copy the hash")),
 		Browse:   key.NewBinding(key.WithKeys("o", "ctrl+o"), key.WithHelp("o", "open the commit in the browser")),
 		// No input here, so `?` opens the panel too.
 		Help: key.NewBinding(key.WithKeys("?", "f1"), key.WithHelp("?", "options")),
 		Back: key.NewBinding(key.WithKeys("q", "esc", "enter"), key.WithHelp("q/esc", "back")),
-		Quit: key.NewBinding(key.WithKeys("ctrl+c")),
 	}
 }
 
@@ -186,7 +184,6 @@ const (
 	modeFull
 	modeSearch
 	modePickaxe
-	modeFatal // startup error shown inside the TUI (see main)
 )
 
 type repoInfoMsg repoInfo
@@ -212,7 +209,6 @@ type model struct {
 
 	// ui
 	mode     uiMode
-	fatal    string
 	flash    flash // a short-lived status in place of the help line (flash.go)
 	panel    panel // options and keys, over the screen while it is open (panel.go)
 	prefs    prefs
@@ -456,8 +452,8 @@ func (m *model) columns() bool { return m.prefs.layout == layoutColumns && m.wid
 // summary, the filter input, the main section (list and details, split by a
 // divider) and the help.
 const (
-	counterY = 2 // the edge over the filter input, which carries the counter
-	mainY    = 4 // the edge over the main section
+	statusY = 2 // the edge over the filter input, which carries the log's scope and the state
+	mainY   = 4 // the edge over the main section
 )
 
 // innerW is the width inside the frame's sides.
@@ -568,7 +564,7 @@ func (m *model) window() []int {
 // (a partial render counts), the window is rendered ahead, in parallel, so
 // that moving through it is instant.
 func (m *model) updatePreview() tea.Cmd {
-	if !m.sized || m.mode == modeFatal {
+	if !m.sized {
 		return nil
 	}
 	vp := m.activeVP()
@@ -848,20 +844,15 @@ func (m *model) tool() diffTool {
 // options is what the panel offers in the current view. The renderer and the
 // layout are chosen there and nowhere else; the rest keep their keys.
 func (m *model) options() []option {
+	opts := m.diffPrefs().options()
+	if m.inFull() {
+		return opts
+	}
 	cur := func(on bool) int {
 		if on {
 			return 1
 		}
 		return 0
-	}
-	diff := map[string]int{diffAuto: 0, diffSBS: 1, diffSingle: 2}
-	opts := []option{
-		{id: "renderer", label: "Diff renderer", values: []string{toolDelta, toolHunk}, cur: cur(m.prefs.tool == toolHunk)},
-		{id: "diff", label: "Diff mode", values: []string{"auto", "side-by-side", "single column"}, cur: diff[m.prefs.diff], key: "^t"},
-		{id: "whitespace", label: "Whitespace", values: []string{"show", "ignore"}, cur: cur(m.prefs.ignoreWS), key: "^s"},
-	}
-	if m.inFull() {
-		return opts
 	}
 	return append(opts,
 		option{id: "layout", label: "Layout", values: []string{layoutRows, layoutColumns}, cur: cur(m.prefs.layout == layoutColumns)},
@@ -869,35 +860,13 @@ func (m *model) options() []option {
 	)
 }
 
+func (m *model) diffPrefs() diffPrefs {
+	return diffPrefs{tool: m.prefs.tool, mode: m.prefs.diff, ignoreWS: m.prefs.ignoreWS}
+}
+
 // setOption changes a setting, remembers it and says so. The keys and the panel both come through here.
 func (m *model) setOption(id string, v int) tea.Cmd {
 	switch id {
-	case "renderer":
-		if m.hunkBin == "" {
-			return m.setFlash("hunk not found")
-		}
-		m.prefs.tool = []string{toolDelta, toolHunk}[v]
-		savePref("renderer", m.prefs.tool)
-		return tea.Batch(m.updatePreview(), m.setFlash("diffs by "+m.prefs.tool))
-	case "diff":
-		m.prefs.diff = []string{diffAuto, diffSBS, diffSingle}[v]
-		savePref("diff", m.prefs.diff)
-		if m.inFull() {
-			return m.updatePreview() // the full view's title names the mode
-		}
-		label := "diff: " + diffLabel(m.prefs.diff, m.prevVP.Width())
-		if m.deltaBin == "" {
-			label = "delta not found: plain git colors"
-		}
-		return tea.Batch(m.updatePreview(), m.setFlash(label))
-	case "whitespace":
-		m.prefs.ignoreWS = v == 1
-		value, label := "show", "whitespace: shown"
-		if m.prefs.ignoreWS {
-			value, label = "ignore", "whitespace: ignored"
-		}
-		savePref("whitespace", value)
-		return tea.Batch(m.updatePreview(), m.setFlash(label))
 	case "layout":
 		m.prefs.layout = []string{layoutRows, layoutColumns}[v]
 		savePref("layout", m.prefs.layout)
@@ -912,7 +881,28 @@ func (m *model) setOption(id string, v int) tea.Cmd {
 		savePref("refs", value)
 		return m.startLog()
 	}
-	return nil
+	// The diff options are the family's (difftool.go).
+	p := m.diffPrefs()
+	flash, changed := p.set(id, v, m.deltaBin, m.hunkBin, m.prevVP.Width())
+	if !changed {
+		if flash == "" {
+			return nil
+		}
+		return m.setFlash(flash)
+	}
+	m.prefs.tool, m.prefs.diff, m.prefs.ignoreWS = p.tool, p.mode, p.ignoreWS
+	switch id { // only what changed is written: a setting never chosen stays unset
+	case "renderer":
+		savePref("renderer", m.prefs.tool)
+	case "diff":
+		savePref("diff", m.prefs.diff)
+	case "whitespace":
+		savePref("whitespace", map[bool]string{false: "show", true: "ignore"}[m.prefs.ignoreWS])
+	}
+	if id == "diff" && m.inFull() {
+		return m.updatePreview() // the full view's title names the mode
+	}
+	return tea.Batch(m.updatePreview(), m.setFlash(flash))
 }
 
 // cycle moves a setting to its next value, for the keys that do so directly.
@@ -937,11 +927,11 @@ func (m *model) resizeList(grow bool) tea.Cmd {
 func (m *model) setFlash(s string) tea.Cmd { return m.flash.set(s) }
 
 func (m *model) copyHash() tea.Cmd {
-	c := m.current()
-	if c == nil || c.wt {
-		return m.setFlash("nothing to copy")
+	hash := ""
+	if c := m.current(); c != nil && !c.wt {
+		hash = c.hash
 	}
-	return copyCmd("asgitlog", "", c.hash)
+	return copyCmd("asgitlog", "", hash) // an empty text flashes "nothing to copy" (clipboard.go)
 }
 
 func (m *model) browse() tea.Cmd {
@@ -962,9 +952,6 @@ func (m *model) browse() tea.Cmd {
 // ---- bubbletea ----
 
 func (m *model) Init() tea.Cmd {
-	if m.mode == modeFatal {
-		return nil
-	}
 	return tea.Batch(textinput.Blink, func() tea.Msg { return repoInfoMsg(loadRepoInfo()) }, m.startLog())
 }
 
@@ -1046,7 +1033,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case modePickaxe:
 		m.pi, cmd = m.pi.Update(msg)
 	default:
-		m.ti, cmd = m.ti.Update(msg)
+		if _, paste := msg.(tea.PasteMsg); paste && (m.panel.open || m.mode != modeList) {
+			return m, nil // nothing is typed under the panel or the full view
+		}
+		// A paste from the terminal, or the input's own ctrl+v, changes the
+		// query without a key press: filter again, as handleKey does.
+		var changed bool
+		if cmd, changed = typeInto(&m.ti, msg); changed {
+			m.applyQuery()
+			return m, tea.Batch(cmd, m.updatePreview())
+		}
 	}
 	return m, cmd
 }
@@ -1062,19 +1058,17 @@ func (m *model) quit() tea.Cmd {
 }
 
 func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "ctrl+c" {
+		return m, m.quit() // from any state, as in every tool of the family; esc only steps back
+	}
 	if m.panel.open {
-		// The panel takes every key: esc closes it before anything else.
-		if msg.String() == "ctrl+c" {
-			return m, m.quit()
-		}
+		// The panel takes every other key: esc closes it before anything else.
 		if a := m.panel.update(msg, m.options()); a.id != "" {
 			return m, m.setOption(a.id, a.value)
 		}
 		return m, nil
 	}
 	switch m.mode {
-	case modeFatal:
-		return m, tea.Quit
 	case modeFull:
 		return m, m.handleFullKey(msg)
 	case modeSearch:
@@ -1143,8 +1137,6 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m *model) handleFullKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch {
-	case key.Matches(msg, m.fullKeys.Quit):
-		return m.quit()
 	case key.Matches(msg, m.fullKeys.Back):
 		// esc first drops an active search, then leaves the full view.
 		if m.searchTerm != "" && msg.String() == "esc" {
@@ -1193,8 +1185,6 @@ func (m *model) handleFullKey(msg tea.KeyPressMsg) tea.Cmd {
 
 func (m *model) handleSearchKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch msg.String() {
-	case "ctrl+c":
-		return m.quit()
 	case "esc":
 		m.mode = modeFull
 		m.si.Blur()
@@ -1214,8 +1204,6 @@ func (m *model) handleSearchKey(msg tea.KeyPressMsg) tea.Cmd {
 // the commits that add or remove the text (an empty text lifts the scope).
 func (m *model) handlePickaxeKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch msg.String() {
-	case "ctrl+c":
-		return m.quit()
 	case "esc", "enter":
 		m.mode = modeList
 		m.pi.Blur()
@@ -1253,8 +1241,6 @@ func (m *model) handleClick(msg tea.MouseClickMsg) tea.Cmd {
 func (m *model) View() tea.View {
 	var s string
 	switch m.mode {
-	case modeFatal:
-		s = "\n  " + stError.Render(m.fatal) + "\n\n  " + stDim.Render("press any key to close")
 	case modeFull, modeSearch:
 		s = m.fullView()
 	default:
@@ -1269,16 +1255,11 @@ func (m *model) View() tea.View {
 		box := panelLines(m.options(), m.panel.cursor, keyLines(m.help, keys, m.width-10), m.width-4, len(lines)-2)
 		s = strings.Join(overlay(lines, box, m.width), "\n")
 	}
-	v := tea.NewView(s)
-	v.AltScreen = true
-	if m.mode == modeList || m.mode == modeFull {
-		v.MouseMode = tea.MouseModeCellMotion
-	}
-	return v
+	return popupView(s, m.mode == modeList || m.mode == modeFull)
 }
 
 // listView stacks the four sections in one frame: repo summary, filter input
-// (the edge over it carries the matches/total counter and the log's scope),
+// (the edge over it carries the log's scope; the counter is under the list),
 // the main section and the help. Neighbours share an edge, so no line is spent
 // on a border of their own.
 func (m *model) listView() string {
@@ -1346,7 +1327,7 @@ func (m *model) listLines() []string {
 		msg := ""
 		switch {
 		case m.logErr != "":
-			msg = " " + stError.Render(truncate(m.logErr, l.width-1))
+			msg = emptyList(m.logErr, "", "", l.width)
 		case m.filtering() || m.opts.pickaxe != "" && !m.loading:
 			msg = emptyList("", "filtered", "", l.width) // the query or the -S scope matches nothing
 		case !m.loading:
@@ -1395,13 +1376,9 @@ func (m *model) mainLines() []string {
 	return append(out, hline(w, "├", "┤", "", pos))
 }
 
-// footLine is the help line (bubbles' short help, cut to the width), or a
-// confirmation while one is showing.
+// footLine is the family's line at the foot; asgitlog has no notices of its own.
 func (m *model) footLine(keys help.KeyMap) string {
-	if m.flash.text != "" {
-		return m.flash.view(m.width - 4)
-	}
-	return helpLine(m.help, keys, m.width-4)
+	return footLine(m.flash, "", m.help, keys, m.width-4)
 }
 
 func (m *model) fullView() string {

@@ -362,6 +362,10 @@ f = t.frame(); dump("content search", f[:7])
 check(counter(f, '2/2 [-S"revision 47"]') and "change number 48" in f[LIST_TOP] and "change number 47" in f[LIST_TOP + 1], "only the commits adding or removing the text")
 t.send(CTRL_G); t.send(BACKSPACE * 11); t.send(ENTER, settle=1.0)
 check(counter(t.frame(), "%d/%d" % (ON_MAIN, ON_MAIN)), "an empty text lifts the scope")
+t.send(b"?", settle=0.6)
+f = t.frame()
+check(f[INPUT].rstrip("│ ").endswith("?") and not has(f, "╭─ options "), "? is text for the filter in the list: %r" % f[INPUT][:40])
+t.send(BACKSPACE, settle=0.6)
 t.send(PANEL); t.send(b"\x1b[B" * 3); t.send(b" "); t.send(ESC); t.send(CTRL_T)
 t.send(CTRL_C)
 check(t.wait_exit() == 0 and pref("layout") == "rows" and pref("diff") == "auto", "ctrl+c exits; settings back to rows + auto")
@@ -397,9 +401,9 @@ check(t.wait_for("feat: change number 59"), "plugin pane browses the focused pan
 t.send(ESC); t.wait_exit()
 pane["HERDR_PLUGIN_CONTEXT_JSON"] = json.dumps({"focused_pane_cwd": SANDBOX})
 t = Term(SANDBOX, extra_env=pane, rows=10, cols=80)
-check(t.wait_for("not inside a git work tree"), "plugin pane outside a repo: error shown inside the TUI")
-t.send(b"x")
-check(t.wait_exit() == 1, "any key closes the error view with status 1")
+check(t.wait_for("not inside a git work tree") and t.wait_for("press enter to close"), "plugin pane outside a repo: the error is held on screen")
+t.send(b"\r")
+check(t.wait_exit() == 1, "enter closes it with status 1")
 
 # ---------- 9. hunk as the diff renderer ----------
 if shutil.which("hunk"):
