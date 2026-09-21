@@ -58,7 +58,8 @@ are split by concern but everything stays in `package main`:
   `overlay`). The same file in every tool of the family.
 - `listnav.go`: `listNav`, the keys that move the cursor through the list and
   where each one takes it. `scrollTo` keeps the cursor in view (`clampCursor`
-  goes through it). The same file in every tool of the family, which
+  goes through it). `emptyList` is what the list says instead of rows:
+  `No matches` under a filter or a `-S` scope, `No commits` otherwise. The same file in every tool of the family, which
   took these keys from here.
 - `highlight.go`: `highlightFrom`, `matchOver`, `onSel` and the
   `stSel`/`stMatch` styles, how a match and the selected row look;
@@ -315,6 +316,9 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   have no home/end keys, only `fn+←/→`, which not every terminal passes on;
   this is the pair the help line advertises), and the wheel over the list
   walks the history.
+- **Alt screen and mouse mode** are declared per frame in `View()`; there is
+  no `tea.WithAltScreen` program option in v2. The mouse is off while the `/`
+  search or the `-S` prompt has the keys.
 - **Mouse**: the wheel is routed by pointer position: over the list
   (`overList`) it moves the selection one row per report; anywhere else it scrolls
   the diff. asgotopr dropped this routing because trackpad inertia drifting

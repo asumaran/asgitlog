@@ -293,6 +293,12 @@ check(t.wait_for(flash("side-by-side")) and pref("diff") == "sbs", "ctrl+t: auto
 t.send(CTRL_T, settle=0.2)
 check(t.wait_for(flash("single column")) and pref("diff") == "single", "ctrl+t: side-by-side -> single column")
 t.pump(0.8)
+t.send(b"\x13", settle=0.2)   # ctrl+s
+check(t.wait_for("│ whitespace: ignored ") and pref("whitespace") == "ignore" and has(t.frame(), "[-w] ─"),
+      "ctrl+s ignores the whitespace: flashed, marked on the bottom edge and persisted")
+t.send(b"\x13", settle=0.2)
+check(t.wait_for("│ whitespace: shown ") and pref("whitespace") == "show" and not has(t.frame(), "[-w]"), "ctrl+s again shows it")
+t.pump(0.8)
 
 t.resize(30, 110); t.pump(1.0)
 f = t.frame()
