@@ -1,3 +1,7 @@
+## v0.9.0 (2026-09-20)
+
+* feat(prefs): default to hunk and remember all refs (5049303)
+
 ## v0.8.0 (2026-09-20)
 
 * feat(ui): open an options and keys panel with f1 (7de3fea)
