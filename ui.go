@@ -944,7 +944,9 @@ func (m *model) browse() tea.Cmd {
 	}
 	url := commitURL(m.webURL, c.hash)
 	return func() tea.Msg {
-		openURL("asgitlog", url)
+		if err := openURL("asgitlog", url); err != nil {
+			return flashMsg("open failed: " + err.Error())
+		}
 		return flashMsg("opened " + url)
 	}
 }
