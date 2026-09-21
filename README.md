@@ -81,7 +81,7 @@ down the history.
 | mouse wheel over the list | move the selection |
 | left click | select a commit |
 | `ctrl+t` | diff mode: auto, side-by-side, single column |
-| panel: Diff renderer | render the diffs with [hunk](https://hunk.dev), the default, or with delta (remembered; delta also stands in while hunk is not installed). Choosing one that is not installed says `<name> not found` and changes nothing |
+| panel: Diff renderer | render the diffs with [hunk](https://hunk.dev), the default, or with delta (remembered; delta also stands in while hunk is not installed). Choosing one that is not installed says `<name> not found`, in red, and changes nothing |
 | `ctrl+s` | show or ignore whitespace changes, like GitHub's "Hide whitespace" (`git show -w`, remembered); `[-w]` on the bottom edge while it is on |
 | panel: Layout | preview below (rows) / on the side (columns) |
 | `shift+←`/`shift+→` | shrink / grow the list |
@@ -142,7 +142,9 @@ In the full-screen diff:
   merge brought into the branch.
 - The working tree row previews `git diff HEAD` and lists untracked files.
 - `ctrl+o` builds the URL from the `origin` remote (or the upstream's remote)
-  and knows the GitHub, GitLab and Bitbucket commit paths.
+  and knows the GitHub, GitLab and Bitbucket commit paths. The help line
+  confirms a copy or an open for a moment; when there is nothing to copy or
+  open, no remote with a web URL, or the command fails, it says so in red.
 - The settings are shared by the popup and the shell command, and only an
   option you changed is saved.
 

@@ -30,8 +30,11 @@ are split by concern but everything stays in `package main`:
 
 - `main.go`: flags (`-version`, `-dump`, `-query`, `-show`, `-n`, `-width`),
   revision/path arguments, the work tree check (`fatal` outside one),
-  `tea.NewProgram`, `runDump`.
-- `git.go`: repo summary and remote web URL (`repoInfo`), log scope
+  `tea.NewProgram`, `runDump` (it writes to an `io.Writer`, so the tests read
+  what `-dump` prints, and keeps colors only when what it writes to is a
+  terminal).
+- `git.go`: the remote's web URL (`loadWebURL`, `webURL`, `commitURL`; the
+  repo summary is in `repoinfo.go`), log scope
   (`logOpts`), the streamed `git log` (`streamLog`, `parseCommit`,
   decorations, the working tree row), per-commit `detail` (body + numstat).
 - `filter.go`: substring/fuzzy terms, hits in log order, narrowing.
@@ -44,7 +47,8 @@ are split by concern but everything stays in `package main`:
   `queryTerms` the same thing through `filtering()`). The same file in every
   tool of the family.
 - `text.go`: `truncate`, `padRight`, `padLeft`: fitting text, styled or not,
-  into cells. The same file in every tool of the family.
+  into cells. `errorBlock` is an error for a preview: every line of it cut to
+  the width, in the error color. The same file in every tool of the family.
 - `setting.go`: `loadSetting`, `saveSetting`, a setting the tool remembers,
   one plain-text file each in the state dir; `prefs.go` reads and writes
   through it. The same file in every tool of the family that needs it.
@@ -76,11 +80,14 @@ are split by concern but everything stays in `package main`:
   `stSel`/`stMatch` styles, how a match and the selected row look;
   `renderSegs` renders every segment through it. The same file in every tool
   of the family, which took this look from here.
-- `flash.go`: `flash`, `flashMsg`, `clearFlashMsg`: a confirmation that takes
-  the help line for a moment. The same file in every tool of the family.
+- `flash.go`: `flash`, `flashMsg`, `flashErrMsg`, `clearFlashMsg`: a word that
+  takes the help line for a moment: a confirmation in green (`flash.set`), or
+  a key that could do nothing (`nothing to copy`) in the error color
+  (`flash.fail`). The same file in every tool of the family.
 - `clipboard.go`: `copyCmd`: feeds a text to the system clipboard and reports
-  it with a `flashMsg`; `ASGITLOG_CLIPBOARD` replaces the command. The same
-  file in every tool of the family.
+  it with a `flashMsg`, or with a `flashErrMsg` when there is nothing to copy
+  or the copy fails; `ASGITLOG_CLIPBOARD` replaces the command. The same file
+  in every tool of the family.
 - `border.go`: `hline`, `framed`, `fit`, `scrollPos`: the primitives the frame
   is drawn with (an edge with texts set into it, a line between the frame's
   sides, the position a scrolled viewport reports on an edge). `fitLines` is
@@ -110,8 +117,13 @@ are split by concern but everything stays in `package main`:
   family that needs it.
 - `openurl.go`: `openURL`: hands a URL to the browser. On macOS a Chrome that
   is already up gets a new tab in its front window, else `open`; `xdg-open`
-  elsewhere; `ASGITLOG_OPENER` replaces all of it. The same file in every tool
-  of the family that opens one.
+  elsewhere; `ASGITLOG_OPENER` (`opener.go`) replaces all of it. The same file
+  in every tool of the family that opens one.
+- `opener.go`: `openerArgv`: the command `<TOOL>_OPENER` names, as words, or
+  nothing when the variable is unset and the tool's own default applies. The
+  value is a command line, not a path: `code -n` and a wrapper with flags both
+  work, a path with spaces does not. The same file in every tool of the family
+  that opens something.
 - `diffmode.go`: how a diff is laid out and fetched: the modes `ctrl+t` walks
   (`effectiveDiff`, `diffLabel`), what the main section's bottom edge says
   about the diff (`diffEdge`), and `limitedOutput`, which runs the command
@@ -132,8 +144,26 @@ are split by concern but everything stays in `package main`:
 - `rendercache.go`: the rendered diffs kept on disk between runs, addressed by
   an id that cannot go stale (a commit's hash, or `patchID`, a hash of the
   patch itself) plus whatever else changes the output: the renderer, its
-  binary and configuration, the width, the mode. The same file asgotochanged
-  ships.
+  binary and configuration, the width, the mode. Plain git renders are never
+  read from it or written to it, which `get` and `put` decide themselves. The
+  same file asgotochanged ships.
+- `renderqueue.go`: `renderQueue`, `renderWindow`: the renders of a list of
+  diffs, the ones that are done, the ones that failed and the ones under way.
+  At most 3 pipelines run at once, the dying ones included: a render nobody
+  wants anymore is cancelled and keeps its slot until it reports back. The
+  selection never waits behind a prefetch: with every slot taken it cancels
+  the least wanted render and starts when that one reports back. A partial
+  render is kept and shown until the final one replaces it, and it stays if
+  the renderer dies on the way; a cancelled one is dropped. A failure is kept,
+  shown as an error and not tried again. At most 128 renders are kept in
+  memory; when full they are all dropped. `renderWindow` is the rows rendered
+  ahead of time: 4 ahead in the direction of travel plus the one behind. The
+  same file in every tool of the family that renders diffs.
+- `repoinfo.go`: `repoInfo`, `loadRepoInfo`, `repoInfo.line`: the repository
+  summary of the context line (checkout, branch, upstream, ahead and behind),
+  fitted to the width: a checkout path that does not fit loses its head, never
+  the branch. The same file in every tool of the family that lists a
+  repository.
 - `difftool.go`: what draws a diff: hunk or delta, or git's own colors when
   neither is installed (`diffTool`, `toolBin`, `pickTool`, `renderPatch`).
   `diffPrefs` is the three diff options of the panel (renderer, diff mode,
@@ -195,7 +225,11 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   four sections (`listView`, built with `hline`/`framed`/`fit` from the shared `border.go`, all lines
   exactly the terminal width) that share their edges (`├─┤`), so no line goes
   to a border of their own (four separate boxes were tried first; the doubled
-  borders read as gaps and cost three lines): the repo summary; the filter
+  borders read as gaps and cost three lines): the repo summary (the model
+  keeps the `repoInfo` and `repoInfo.line` fits it at render time: a checkout
+  path that does not fit loses its head, never the branch; `repoInfoMsg`
+  brings it once, at start, together with the `WebURL` of the remote, which
+  `loadWebURL` reads for `ctrl+o`); the filter
   input, whose top edge carries the log's `[scope]` and the loading mark;
   the main section, holding the list AND the commit details split by a divider
   (`mainLines`); and the help line. The edge over the details (the divider in rows, the top
@@ -264,8 +298,8 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   and the whitespace are the shared `diffPrefs` (`difftool.go`): `setOption`
   hands the change to `diffPrefs.set`, which says what to flash. The panel
   switches to either renderer that is installed, delta included while hunk is
-  missing; one that is not installed flashes `<name> not found` and changes
-  nothing. Only the option that changed is saved, so a setting never chosen
+  missing; one that is not installed flashes `<name> not found` in the error
+  color and changes nothing. Only the option that changed is saved, so a setting never chosen
   stays unset. Only hunk's looks are wanted. hunk has NO static output (`hunk pager`
   passes the patch through when stdout is not a tty, `hunk patch` starts its
   TUI regardless), so `renderHunk` runs `hunk patch <tmpfile> --pager
@@ -283,7 +317,7 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   every commit feel slow, so renders are PROGRESSIVE: the first frame (a
   closed synchronized-output frame, or a 40 ms pause) is reported as a
   `partial` render whose `previewMsg.next` waits for the final one. A partial
-  render is shown but stays the one in flight (no prefetch meanwhile); the
+  render is shown and its pipeline stays in flight, keeping its slot; the
   final one replaces it in place (same text, only colors change, so the scroll
   offset holds). A cancelled pipeline drops its partial render, or it would
   never be refined; one that fails after its first frame keeps it.
@@ -308,20 +342,25 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   one and over a rule of `─`) or plain git's `diff --git`. It depends on
   delta's default file decoration.
 - **Bounded render pool with prefetch**: previews render as a `tea.Cmd`,
-  cached in memory per (commit, width, tool, effective mode). At most
-  `maxPipelines` (3) pipelines are in flight (`m.inflight`), DYING ones
+  cached in memory per (commit, width, tool, effective mode). What runs, what
+  waits and what is given up is decided by the shared `renderQueue`
+  (`renderqueue.go`, `m.queue`, the same file asgotochanged ships). At most
+  `maxPipelines` (3) pipelines are in flight, DYING ones
   included: a cancelled render holds its slot until it reports back, so
   holding an arrow key never piles up processes. Every `updatePreview`
   cancels the renders outside the window (`cancelStale`); the wanted render
   starts on a free slot, waits for a dying one to free it, or, with every slot
-  live and in the window, takes the least wanted one's. Once the selection is
+  live, cancels the least wanted one and starts when that reports back. Once the selection is
   served (a partial render counts), the window is rendered ahead in the free
-  slots, in parallel: the row ahead, the row behind, then up to
+  slots, in parallel (`renderWindow`): the row ahead, the row behind, then up to
   `prefetchAhead` (4) rows in the direction of travel (`m.dir`). It used to be
   strictly one render at a time with cursor±1 ahead; with hunk's ~0.6 s per
   commit that never kept up with someone stepping through the log. Failed
-  renders are remembered (`failed`) and shown, not retried, or the prefetch
-  would loop. Nothing renders before the first `WindowSizeMsg`.
+  renders are remembered (`failed`) and shown under the header through the
+  shared `errorBlock` (`text.go`), not retried, or the prefetch
+  would loop. At most `maxRenders` (128) renders are kept in memory; when
+  full they are all dropped, and the details kept next to them too. Nothing
+  renders before the first `WindowSizeMsg`.
 - **Disk cache of the rendered diffs** (`rendercache.go`, `renderCache`; the id is `renderID`: the hash and the paths): a commit
   never changes, so the diff a tool drew is stored gzipped under
   `${XDG_CACHE_HOME:-~/.cache}/asgitlog/renders/`, keyed by a hash of (format
@@ -347,7 +386,10 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   AppleScript like asgotopr, or `ASGITLOG_OPENER`) and stays open. Both go
   through files shared with the family: `clipboard.go`, `openurl.go`, and
   `flash.go` for the confirmation. Results show
-  as a 2-second flash in place of the help line.
+  as a 2-second flash in place of the help line: a confirmation in green, and
+  a key that could do nothing (`nothing to copy`, `copy failed: ...`,
+  `nothing to open`, `open failed: ...`, `no remote with a web URL`) in the
+  error color (`flash.fail`, `flashErrMsg`).
 - **Help and options**: the bottom line is the short view of bubbles' `help`
   (`helpfoot.go`). `f1` opens
   the panel (`panel.go`, the same file in every tool of the family): the
@@ -416,7 +458,8 @@ filtering (substring, fuzzy, AND, non-ASCII, narrowing, byte offsets), row
 layout (exact widths, column alignment, narrow fallback, special rows,
 relative dates), settings, the header variants, file header detection, and
 the model (geometry, toggles and persistence, list
-resizing, filter flow, render pool + prefetch + partial renders, the disk
+resizing, filter flow, render pool + prefetch + partial renders (the queue
+on its own in `renderqueue_test.go`), the disk
 cache, render errors, box edges and
 file jumps, full view navigation + search + help, copy/browse through stubs,
 scope input, error states). Integration tests build a throwaway repository
