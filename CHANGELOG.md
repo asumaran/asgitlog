@@ -1,3 +1,7 @@
+## v0.9.1 (2026-09-20)
+
+* refactor(list): keep the cursor in view with scrollTo (dd6e53a)
+
 ## v0.9.0 (2026-09-20)
 
 * feat(prefs): default to hunk and remember all refs (5049303)
