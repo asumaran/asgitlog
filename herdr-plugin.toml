@@ -1,6 +1,6 @@
 id = "asumaran.asgitlog"
 name = "asgitlog"
-version = "0.10.1"
+version = "0.11.0"
 min_herdr_version = "0.7.5"
 description = "Browse the git history of the focused pane's repository with a diff preview rendered by hunk or delta"
 platforms = ["linux", "macos"]

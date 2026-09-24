@@ -1,3 +1,7 @@
+## v0.11.0 (2026-09-24)
+
+* feat(ui): move the context to the foot next to the panel key (55ae5e2)
+
 ## v0.10.1 (2026-09-21)
 
 * test(pty): expect the no renderer flash on ci (e17f3f8)
