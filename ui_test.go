@@ -115,18 +115,18 @@ func keyAt(m *model, i int) string {
 
 func TestGeometry(t *testing.T) {
 	m := testModel(t, 100)
-	// 43 lines: summary, input and help take one each, the frame's five edges
-	// leave 35. Rows: the details get 70%, the divider 1, the list the rest.
-	if m.mainH() != 35 || m.detailsH() != 24 || m.listH() != 10 {
+	// 43 lines: the input and the foot take one each, the frame's four edges
+	// leave 37. Rows: the details get 70%, the divider 1, the list the rest.
+	if m.mainH() != 37 || m.detailsH() != 25 || m.listH() != 11 {
 		t.Errorf("rows: main=%d details=%d list=%d", m.mainH(), m.detailsH(), m.listH())
 	}
-	if m.listW() != 158 || m.detailsW() != 158 || m.prevVP.Height() != 24 || m.prevVP.Width() != 156 {
+	if m.listW() != 158 || m.detailsW() != 158 || m.prevVP.Height() != 25 || m.prevVP.Width() != 156 {
 		t.Errorf("rows widths: list=%d details=%d vp=%dx%d", m.listW(), m.detailsW(), m.prevVP.Width(), m.prevVP.Height())
 	}
 	m.cycle("layout")
 	// Columns: list (25%) and details (75%) at full height, a divider between
 	// them.
-	if m.detailsW() != 118 || m.listW() != 39 || m.listH() != 35 || m.detailsH() != 35 || m.prevVP.Height() != 35 || m.prevVP.Width() != 116 {
+	if m.detailsW() != 118 || m.listW() != 39 || m.listH() != 37 || m.detailsH() != 37 || m.prevVP.Height() != 37 || m.prevVP.Width() != 116 {
 		t.Errorf("columns: list=%dx%d details=%dx%d vp=%dx%d", m.listW(), m.listH(), m.detailsW(), m.detailsH(), m.prevVP.Width(), m.prevVP.Height())
 	}
 	// The frame invariant, as in every tool of the family: exactly height
@@ -134,7 +134,7 @@ func TestGeometry(t *testing.T) {
 	// and open. The main section is never under four lines (mainH), so the
 	// frame is never under minFrameH: a popup shorter than that is cut by the
 	// terminal, not squeezed.
-	const minFrameH = mainY + 1 + 4 + 1 + 2 // what is over the main section, its edges around four lines, the help, the bottom edge
+	const minFrameH = mainY + 1 + 4 + 1 + 2 // what is over the main section, its edges around four lines, the foot, the bottom edge
 	sizes := [][2]int{{160, 43}, {94, 24}, {150, 16}, {80, 24}, {61, 18}, {61, 12}, {40, 16}, {40, 10}}
 	for _, size := range sizes {
 		for range 2 {
@@ -183,11 +183,12 @@ func TestGeometry(t *testing.T) {
 func TestRowsLayout(t *testing.T) {
 	m := testModel(t, 5)
 	ls := lines(m)
-	// One frame, four sections sharing their edges: summary, input, main
-	// (counter on the edge under the list), help.
-	if !strings.HasPrefix(ls[0], "╭─") || !strings.HasPrefix(ls[2], "├─") || !strings.HasSuffix(ls[2], "─ (dev) ─┤") ||
-		!strings.HasSuffix(ls[15], "─ 5/5 ─┤") ||
-		!strings.HasPrefix(ls[3], "│ asgitlog") || !strings.HasPrefix(ls[4], "├─") || !strings.HasPrefix(ls[40], "├─") ||
+	// One frame, three sections sharing their edges: input (the state on the
+	// top border), main (counter on the edge under the list), foot (the help
+	// until the repo summary arrives).
+	if !strings.HasPrefix(ls[0], "╭─") || !strings.HasSuffix(ls[0], "─ (dev) ─╮") ||
+		!strings.HasSuffix(ls[14], "─ 5/5 ─┤") ||
+		!strings.HasPrefix(ls[1], "│ asgitlog") || !strings.HasPrefix(ls[2], "├─") || !strings.HasPrefix(ls[40], "├─") ||
 		!strings.HasPrefix(ls[41], "│ type filter") || !strings.HasPrefix(ls[42], "╰─") {
 		t.Errorf("sections:\n%s", screen(m))
 	}
@@ -202,8 +203,8 @@ func TestRowsLayout(t *testing.T) {
 		}
 	}
 	// Top-down: the newest commit right under the input box, older ones below.
-	first, last := m.listY(), m.listY()+m.listH()-1
-	if first != 5 || !strings.HasPrefix(ls[first], "│▌ 0000000") || !strings.HasPrefix(ls[first+1], "│  0000001") {
+	first, last := listY, listY+m.listH()-1
+	if first != 3 || !strings.HasPrefix(ls[first], "│▌ 0000000") || !strings.HasPrefix(ls[first+1], "│  0000001") {
 		t.Errorf("newest commit should be the first list line:\n%s\n%s", ls[first], ls[first+1])
 	}
 	if strings.Trim(ls[last], " │") != "" {
@@ -224,7 +225,7 @@ func TestRowsLayout(t *testing.T) {
 	if m.cursor != 3 {
 		t.Errorf("click on the fourth list line should select row 3, got %d", m.cursor)
 	}
-	for _, y := range []int{1, 4, last + 1, last + 10} { // summary, input, divider, details
+	for _, y := range []int{0, 1, last + 1, last + 10} { // border, input, divider, details
 		m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 10, Y: y})
 	}
 	m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 0, Y: last}) // the border
@@ -237,7 +238,7 @@ func TestColumnsLayoutIsTopDown(t *testing.T) {
 	m := testModel(t, 5)
 	m.cycle("layout")
 	ls := lines(m)
-	y := m.listY()
+	y := listY
 	// Compact rows: hash, relative date, subject; a vertical divider to the
 	// details, tied into the top and bottom edges.
 	if !strings.HasPrefix(ls[y], "│▌ 0000000 ") || !strings.Contains(ls[y], " commit number 0") || strings.Contains(ls[y], "Ada") {
@@ -363,8 +364,8 @@ func TestFilterFlow(t *testing.T) {
 	if edge := edges(m)[0]; !strings.HasSuffix(edge, "─ 12/200 ─┤") {
 		t.Errorf("counter on the edge under the list: %q", edge)
 	}
-	if line := lines(m)[statusY]; !strings.HasSuffix(line, "── (dev) ─┤") { // tests run an unstamped build
-		t.Errorf("edge over the input: %q", line)
+	if line := lines(m)[statusY]; !strings.HasSuffix(line, "── (dev) ─╮") { // tests run an unstamped build
+		t.Errorf("top border: %q", line)
 	}
 	press(m, "down")
 	keep := m.current().hash
@@ -491,7 +492,7 @@ func TestPreviewBoxEdges(t *testing.T) {
 	content := strings.Join(body, "\n")
 	m.Update(previewMsg{key: m.wantKey, hash: hashOf(0), render: render{content: content, files: fileLines(content)}})
 	box := edges(m)
-	if strings.ReplaceAll(box[0], "─", "") != "├ 3/3 ┤" || !strings.HasSuffix(box[2], " 24/100 ─┤") {
+	if strings.ReplaceAll(box[0], "─", "") != "├ 3/3 ┤" || !strings.HasSuffix(box[2], " 25/100 ─┤") {
 		t.Errorf("at the top:\n%s\n%s", box[0], box[2])
 	}
 	press(m, "tab")
@@ -499,7 +500,7 @@ func TestPreviewBoxEdges(t *testing.T) {
 	if m.prevVP.YOffset() != 30 || !strings.HasPrefix(box[1], "│ src/ui.go") {
 		t.Errorf("tab should jump to the first file: offset=%d %q", m.prevVP.YOffset(), box[1])
 	}
-	if strings.ReplaceAll(box[0], "─", "") != "├ 3/3 ┤" || !strings.HasSuffix(box[2], " 54/100 ─┤") {
+	if strings.ReplaceAll(box[0], "─", "") != "├ 3/3 ┤" || !strings.HasSuffix(box[2], " 55/100 ─┤") {
 		t.Errorf("scrolled: the divider keeps the counter, the position goes on the bottom edge:\n%s\n%s", box[0], box[2])
 	}
 	press(m, "tab", "tab")
@@ -776,8 +777,8 @@ func TestScopeAndPickaxeInput(t *testing.T) {
 	if m.mode != modeList || m.opts.pickaxe != "" || m.logGen != 0 {
 		t.Errorf("esc cancels: mode=%v pickaxe=%q gen=%d", m.mode, m.opts.pickaxe, m.logGen)
 	}
-	if s := lines(m)[statusY]; !strings.HasSuffix(s, "── [-- src] (dev) ─┤") {
-		t.Errorf("scope on the edge over the input: %q", s)
+	if s := lines(m)[statusY]; !strings.HasSuffix(s, "── [-- src] (dev) ─╮") {
+		t.Errorf("scope on the top border: %q", s)
 	}
 }
 
@@ -831,7 +832,7 @@ func TestBackToTheNewestCommit(t *testing.T) {
 	// The wheel over the list moves the selection; elsewhere it scrolls the
 	// diff.
 	wheel := func(b tea.MouseButton, x, y int) { m.Update(tea.MouseWheelMsg{Button: b, X: x, Y: y}) }
-	y := m.listY() + 2
+	y := listY + 2
 	wheel(tea.MouseWheelDown, 10, y)
 	wheel(tea.MouseWheelDown, 10, y)
 	if m.cursor != 2 {
@@ -846,16 +847,16 @@ func TestBackToTheNewestCommit(t *testing.T) {
 	m.queue.done[m.wantKey] = render{content: body}
 	m.shownKey = ""
 	m.updatePreview()
-	wheel(tea.MouseWheelDown, 10, m.listY()+m.listH()+5) // over the details
+	wheel(tea.MouseWheelDown, 10, listY+m.listH()+5) // over the details
 	if m.cursor != 1 || m.prevVP.YOffset() == 0 {
 		t.Errorf("wheel over the details should scroll them: cursor=%d offset=%d", m.cursor, m.prevVP.YOffset())
 	}
 	m.cycle("layout") // columns: top-down
-	wheel(tea.MouseWheelDown, 10, m.listY()+2)
+	wheel(tea.MouseWheelDown, 10, listY+2)
 	if m.cursor != 2 {
 		t.Errorf("columns: wheel down over the list should go to older commits, cursor=%d", m.cursor)
 	}
-	wheel(tea.MouseWheelDown, m.listW()+10, m.listY()+2) // right of the divider
+	wheel(tea.MouseWheelDown, m.listW()+10, listY+2) // right of the divider
 	if m.cursor != 2 {
 		t.Errorf("columns: wheel over the details moved the cursor to %d", m.cursor)
 	}

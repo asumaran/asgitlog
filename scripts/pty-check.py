@@ -176,12 +176,12 @@ def dump(title, f):
 def has(f, text): return any(text in l for l in f)
 def selected(f): return [l for l in f if l.startswith("│▌ ")]
 # text is "matches/total", optionally followed by the scope: the count sits at
-# the right end of the edge under the list, the scope on the edge over the input. The pty check
-# runs an unstamped build, which says "(dev)" at the end of that edge.
+# the right end of the edge under the list, the scope on the top border. The pty check
+# runs an unstamped build, which says "(dev)" at the end of that border.
 def counter(f, text):
     count, _, scope = text.partition(" ")
     under = any(re.match("├─+ " + re.escape(count) + " ─[┴┤]", l) for l in f)
-    return under and f[COUNTER].endswith((" " + scope if scope else "─") + " (dev) ─┤")
+    return under and f[COUNTER].endswith((" " + scope if scope else "─") + " (dev) ─╮")
 def pref(name):
     try: return open(os.path.join(STATE, "asgitlog", name)).read().strip()
     except OSError: return None
@@ -190,10 +190,11 @@ PROMPT = "asgitlog ❯"
 UP, DOWN, RIGHT, ESC, ENTER, TAB, BACKSPACE = b"\x1b[A", b"\x1b[B", b"\x1b[C", b"\x1b", b"\r", b"\t", b"\x7f"
 CTRL_A, CTRL_C, CTRL_G, CTRL_O, CTRL_T, CTRL_Y, PANEL, SHIFT_RIGHT = b"\x01", b"\x03", b"\x07", b"\x0f", b"\x14", b"\x19", b"\x1bOP", b"\x1b[1;2C"
 
-# Rows layout at 40 lines, one frame of four sections sharing their edges:
-# summary 1, input 3 (counter on the edge over it, 2), main 4-37 (list 5-13,
-# top-down with the newest at 5, divider 14, details 15-36), help 38.
-INFO, COUNTER, INPUT, LIST_TOP, NEWEST, DIVIDER, BOTTOM, HELP = 1, 2, 3, 5, 5, 14, 37, 38
+# Rows layout at 40 lines, one frame of three sections sharing their edges:
+# input 1 (scope and state on the top border, 0), main 2-37 (list 3-12,
+# top-down with the newest at 3, divider 13, details 14-36), foot 38 (the
+# repo summary and the panel key).
+COUNTER, INPUT, LIST_TOP, NEWEST, DIVIDER, BOTTOM, HELP = 0, 1, 3, 3, 13, 37, 38
 
 # ---------- 1. the rows layout ----------
 print("== asgitlog pty driver (%dx%d) ==" % (COLS, ROWS))
@@ -201,7 +202,7 @@ t = Term(REPO)
 check(t.wait_for("side.txt"), "first preview rendered by delta")
 t.pump(0.5)
 f0 = t.frame(); dump("initial frame (rows layout)", f0)
-check(f0[0].startswith("╭─") and f0[INFO].startswith("│ ") and f0[INFO].rstrip("│ ").endswith("/repo  main") and f0[COUNTER].startswith("├─"), "repo summary on top, sharing its edge with the input: %r" % f0[INFO][-40:])
+check(f0[0].startswith("╭─") and f0[INPUT].startswith("│ ") and "/repo  main" in f0[HELP] and f0[HELP].rstrip("│ ").endswith("f1 options"), "repo summary at the foot, the panel key at its right end: %r" % f0[HELP][-60:])
 check(all(len(l) == COLS for l in f0), "every line spans the full width")
 check(f0[NEWEST].startswith("│▌ " + HEAD + " Ada Lovelace Merge branch 'side'"), "newest commit first, wide row: hash, author, subject (no email)")
 check(re.search(r"  HEAD -> main \d\d/\d\d/\d{4}│$", f0[NEWEST]) is not None, "refs take what they need, right before the date: %r" % f0[NEWEST][-32:])
@@ -212,7 +213,7 @@ check(f0[LIST_TOP - 1].startswith("├─") and re.fullmatch(r"├─+ %d/%d ─
       "list and details share a section; the divider carries the counter at its right end: %r" % f0[DIVIDER][-24:])
 check(all(l.startswith("│ ") and l.endswith(" │") for l in f0[DIVIDER + 1:BOTTOM]) and f0[BOTTOM].startswith("├─"), "details framed with padding")
 check(has(f0, "Merge:  ") and has(f0, "diff against the first parent") and has(f0, "── 1 file changed  +1 -0 ─") and has(f0, "── diff ─"), "a clean merge shows what it brought in")
-check(f0[HELP].startswith("│ type filter") and "f1 options" in f0[HELP] and f0[HELP + 1].startswith("╰─"), "help at the bottom of the frame: %r" % f0[HELP][:60])
+check(f0[HELP].startswith("│ ") and "type filter" not in f0[HELP] and f0[HELP + 1].startswith("╰─"), "the foot shows the context, not the actions, at the bottom of the frame: %r" % f0[HELP][:60])
 check([i for i, l in enumerate(f0) if l[0] in "╭╰"] == [0, ROWS - 1], "one frame: no section spends lines on borders of its own")
 check(b"\x1b[?1049h" in t.raw, "alt screen entered")
 

@@ -142,7 +142,7 @@ In the full-screen diff:
   merge brought into the branch.
 - The working tree row previews `git diff HEAD` and lists untracked files.
 - `ctrl+o` builds the URL from the `origin` remote (or the upstream's remote)
-  and knows the GitHub, GitLab and Bitbucket commit paths. The help line
+  and knows the GitHub, GitLab and Bitbucket commit paths. The foot
   confirms a copy or an open for a moment; when there is nothing to copy or
   open, no remote with a web URL, or the command fails, it says so in red.
 - The settings are shared by the popup and the shell command, and only an

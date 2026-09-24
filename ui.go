@@ -32,7 +32,6 @@ var (
 	stTitle  = lipgloss.NewStyle().Bold(true)
 	stError  = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
 	stLabel  = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
-	stInfo   = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
 	stScope  = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
 	stCount  = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	stFound  = lipgloss.NewStyle().Reverse(true)
@@ -187,7 +186,7 @@ const (
 )
 
 // repoInfoMsg is what is asked of git once, at start: the repo summary of the
-// context line and the web page of its remote (for ctrl+o).
+// foot and the web page of its remote (for ctrl+o).
 type repoInfoMsg struct {
 	repoInfo
 	WebURL string
@@ -210,7 +209,7 @@ type model struct {
 	logCh    <-chan logBatch
 	stopLog  context.CancelFunc
 	seekHash string   // commit to land on again after the log restarted
-	info     repoInfo // the context line, fitted to the width when it is drawn
+	info     repoInfo // the context at the foot, fitted to the room when it is drawn
 	webURL   string
 
 	// filter
@@ -454,19 +453,11 @@ const minColumnsW = 60
 // rows on a narrow terminal, without touching the saved setting.
 func (m *model) columns() bool { return m.prefs.layout == layoutColumns && m.width >= minColumnsW }
 
-// The screen is one frame of four sections split by shared edges: the repo
-// summary, the filter input, the main section (list and details, split by a
-// divider) and the help.
-const (
-	statusY = 2 // the edge over the filter input, which carries the log's scope and the state
-	mainY   = 4 // the edge over the main section
-)
-
 // innerW is the width inside the frame's sides.
 func (m *model) innerW() int { return max(20, m.width-2) }
 
 // mainH is the height between the main section's edges.
-func (m *model) mainH() int { return max(4, m.height-mainY-2-2) } // minus the help line and the bottom edge
+func (m *model) mainH() int { return max(4, m.height-mainY-2-2) } // minus the foot and the bottom edge
 
 // detailsH and detailsW are the area of the commit details inside the main
 // section, including the cell of padding on each side.
@@ -498,13 +489,9 @@ func (m *model) listW() int {
 	return m.innerW()
 }
 
-// listY is the first screen line of the list, right under the main section's
-// top edge.
-func (m *model) listY() int { return mainY + 1 }
-
 // overList reports whether a screen cell is inside the list.
 func (m *model) overList(x, y int) bool {
-	return inList(x, y, m.listY(), m.listW(), m.listH())
+	return inList(x, y, listY, m.listW(), m.listH())
 }
 
 func (m *model) resize() {
@@ -1138,7 +1125,7 @@ func (m *model) handleClick(msg tea.MouseClickMsg) tea.Cmd {
 	if !m.overList(msg.X, msg.Y) {
 		return nil
 	}
-	i, ok := rowUnder(msg.Y, m.listY(), m.top, m.rowCount())
+	i, ok := rowUnder(msg.Y, listY, m.top, m.rowCount())
 	if !ok || i == m.cursor {
 		return nil
 	}
@@ -1168,25 +1155,31 @@ func (m *model) View() tea.View {
 	return popupView(s, m.mode == modeList || m.mode == modeFull)
 }
 
-// listView stacks the four sections in one frame: repo summary, filter input
-// (the edge over it carries the log's scope; the counter is under the list),
-// the main section and the help. Neighbours share an edge, so no line is spent
-// on a border of their own.
+// listView stacks the sections in one frame (see frame.go): the filter input
+// (the top border carries the log's scope; the counter is under the list),
+// the main section and the foot, which carries the repo summary and the
+// panel's key. Neighbours share an edge, so no line is spent on a border of
+// their own.
 func (m *model) listView() string {
 	w := m.width
 	input := m.ti.View()
 	if m.mode == modePickaxe {
 		input = m.pi.View()
 	}
-	out := []string{
-		hline(w, "╭", "╮", "", ""),
-		framed(w, stInfo.Render(m.info.line(max(0, w-4)))),
-		hline(w, "├", "┤", "", withDevMark(m.status())),
-		framed(w, input),
-	}
+	out := frameHead(w, withDevMark(m.status()), input)
 	out = append(out, m.mainLines()...)
-	out = append(out, framed(w, m.footLine(m.keys)), hline(w, "╰", "╯", "", ""))
+	out = append(out, framed(w, footLine(m.flash, "", m.context(), m.help, m.keys, w-4)), hline(w, "╰", "╯", "", ""))
 	return strings.Join(out, "\n")
+}
+
+// context is the repo summary for the foot, fitted to the room the panel's
+// key leaves; empty until git has answered (repoInfoMsg), when the foot is
+// the help.
+func (m *model) context() string {
+	if m.info.Top == "" {
+		return ""
+	}
+	return stInfo.Render(m.info.line(footRoom(m.help, m.keys, m.width-4)))
 }
 
 // scope describes what the log is limited to, beyond the current branch.
@@ -1286,11 +1279,6 @@ func (m *model) mainLines() []string {
 	return append(out, hline(w, "├", "┤", "", pos))
 }
 
-// footLine is the family's line at the foot; asgitlog has no notices of its own.
-func (m *model) footLine(keys help.KeyMap) string {
-	return footLine(m.flash, "", m.help, keys, m.width-4)
-}
-
 func (m *model) fullView() string {
 	title := ""
 	if c := m.current(); c != nil {
@@ -1310,7 +1298,7 @@ func (m *model) fullView() string {
 		}
 		head += "  " + stDim.Render("/"+m.searchTerm+" ("+found+")")
 	}
-	foot := "  " + m.footLine(m.fullKeys)
+	foot := "  " + footLine(m.flash, "", "", m.help, m.fullKeys, m.width-4) // no context here: the head names the commit
 	if m.mode == modeSearch {
 		foot = m.si.View()
 	}

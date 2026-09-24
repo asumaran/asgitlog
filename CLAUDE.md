@@ -62,10 +62,12 @@ are split by concern but everything stays in `package main`:
   and the input's own `ctrl+v` all edit it, and the caller filters again only
   when it did. The same file in every tool of the family. The `/` search and
   the `-S` inputs keep their own prompts.
-- `helpfoot.go`: the help line at the foot, cut to the width, and the key that
-  opens the panel. `footLine` is what the foot shows: a flash first, then a
-  notice in the error color, else the help. The same file in every tool of the
-  family.
+- `helpfoot.go`: the line at the foot and the key that opens the panel.
+  `footLine` is what the foot shows: a flash first, then a notice in the error
+  color, else the help cut to the width; with a context (`info`, styled with
+  `stInfo` and fitted to `footRoom`) the flash, the notice or the context on
+  the left and the panel's key alone on the right (`panelHint`, taken from
+  the tool's own `ShortHelp`). The same file in every tool of the family.
 - `panel.go`: the panel `f1` opens over the screen, options to change in
   place and every key under them (`option`, `panel`, `panelLines`,
   `overlay`). The same file in every tool of the family.
@@ -81,13 +83,17 @@ are split by concern but everything stays in `package main`:
   `renderSegs` renders every segment through it. The same file in every tool
   of the family, which took this look from here.
 - `flash.go`: `flash`, `flashMsg`, `flashErrMsg`, `clearFlashMsg`: a word that
-  takes the help line for a moment: a confirmation in green (`flash.set`), or
+  takes the foot for a moment: a confirmation in green (`flash.set`), or
   a key that could do nothing (`nothing to copy`) in the error color
   (`flash.fail`). The same file in every tool of the family.
 - `clipboard.go`: `copyCmd`: feeds a text to the system clipboard and reports
   it with a `flashMsg`, or with a `flashErrMsg` when there is nothing to copy
   or the copy fails; `ASGITLOG_CLIPBOARD` replaces the command. The same file
   in every tool of the family.
+- `frame.go`: the single-frame layout the family shares: `frameHead` (the
+  top border with the status, the input), `splitMain` (unused here: the main
+  section is `mainLines`) and the section rows (`statusY`, `mainY`, `listY`,
+  `frameRows`). The same file in every tool of the family.
 - `border.go`: `hline`, `framed`, `fit`, `scrollPos`: the primitives the frame
   is drawn with (an edge with texts set into it, a line between the frame's
   sides, the position a scrolled viewport reports on an edge). `fitLines` is
@@ -160,10 +166,10 @@ are split by concern but everything stays in `package main`:
   ahead of time: 4 ahead in the direction of travel plus the one behind. The
   same file in every tool of the family that renders diffs.
 - `repoinfo.go`: `repoInfo`, `loadRepoInfo`, `repoInfo.line`: the repository
-  summary of the context line (checkout, branch, upstream, ahead and behind),
-  fitted to the width: a checkout path that does not fit loses its head, never
-  the branch. The same file in every tool of the family that lists a
-  repository.
+  summary at the foot (checkout, branch, upstream, ahead and behind), fitted
+  to the width: a checkout path that does not fit loses its head, never the
+  branch, and goes when no readable tail fits. The same file in every tool of
+  the family that lists a repository.
 - `difftool.go`: what draws a diff: hunk or delta, or git's own colors when
   neither is installed (`diffTool`, `toolBin`, `pickTool`, `renderPatch`).
   `diffPrefs` is the three diff options of the panel (renderer, diff mode,
@@ -222,17 +228,20 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
 - **Layout is computed at render time** from structs, so a resize or a layout
   change never re-runs git and the cursor trivially stays on the same commit.
   Only the visible window of rows is rendered. The screen is ONE FRAME of
-  four sections (`listView`, built with `hline`/`framed`/`fit` from the shared `border.go`, all lines
-  exactly the terminal width) that share their edges (`├─┤`), so no line goes
-  to a border of their own (four separate boxes were tried first; the doubled
-  borders read as gaps and cost three lines): the repo summary (the model
-  keeps the `repoInfo` and `repoInfo.line` fits it at render time: a checkout
-  path that does not fit loses its head, never the branch; `repoInfoMsg`
-  brings it once, at start, together with the `WebURL` of the remote, which
-  `loadWebURL` reads for `ctrl+o`); the filter
-  input, whose top edge carries the log's `[scope]` and the loading mark;
-  the main section, holding the list AND the commit details split by a divider
-  (`mainLines`); and the help line. The edge over the details (the divider in rows, the top
+  three sections (`listView`, built on the shared `frame.go` and the
+  `hline`/`framed`/`fit` primitives of `border.go`, all lines exactly the
+  terminal width) that share their edges (`├─┤`), so no line goes to a border
+  of their own (separate boxes were tried first; the doubled borders read as
+  gaps and cost lines): the filter input, whose top edge (the frame's top
+  border) carries the log's `[scope]` and the loading mark; the main section,
+  holding the list AND the commit details split by a divider (`mainLines`);
+  and the foot, which carries the repo summary (the model keeps the
+  `repoInfo` and `repoInfo.line` fits it at render time to the room the
+  panel's key leaves: a checkout path that does not fit loses its head, never
+  the branch; `repoInfoMsg` brings it once, at start, together with the
+  `WebURL` of the remote, which `loadWebURL` reads for `ctrl+o`; until it
+  arrives the foot is the help) and the panel's key at its right end. The
+  edge over the details (the divider in rows, the top
   edge in columns) says nothing about the diff: it used to carry the diff mode
   and the scrolled-away commit, which was dropped as noise. The edge under the
   list (the divider in rows, the left part of the bottom edge in columns)
@@ -276,7 +285,7 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   `-m --first-parent` makes a merge show what it brought in; git show's
   combined diff is empty for a clean merge. Diff mode: `auto` (side by side
   from 120 columns of preview), `sbs`,
-  `single`; `ctrl+t` cycles and flashes the new mode in the help line (the
+  `single`; `ctrl+t` cycles and flashes the new mode at the foot (the
   list has no standing label for it; the full view's title does). The cache
   key uses the EFFECTIVE mode, so auto shares renders with the explicit modes.
   With neither renderer in `PATH` the diff falls back to `git show --color=always`
@@ -386,12 +395,15 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   AppleScript like asgotopr, or `ASGITLOG_OPENER`) and stays open. Both go
   through files shared with the family: `clipboard.go`, `openurl.go`, and
   `flash.go` for the confirmation. Results show
-  as a 2-second flash in place of the help line: a confirmation in green, and
+  as a 2-second flash in place of the foot's context: a confirmation in green, and
   a key that could do nothing (`nothing to copy`, `copy failed: ...`,
   `nothing to open`, `open failed: ...`, `no remote with a web URL`) in the
   error color (`flash.fail`, `flashErrMsg`).
-- **Help and options**: the bottom line is the short view of bubbles' `help`
-  (`helpfoot.go`). `f1` opens
+- **Help and options**: in the list the bottom line is the repo summary and,
+  at its right end, the panel's key alone (`helpfoot.go`); the actions are in
+  the panel, and `ShortHelp()` still lists them for the foot to take the
+  panel's key from. The full view has no context, so its bottom line is the
+  short view of bubbles' `help`, keys included. `f1` opens
   the panel (`panel.go`, the same file in every tool of the family): the
   options on top, to change with `←`/`→` or `space`, and under them every key
   of the current context's key map, laid out by bubbles' `help` from
