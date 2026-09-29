@@ -275,7 +275,7 @@ func TestLayoutTogglePersistsAndKeepsCommit(t *testing.T) {
 	if m.cursor != 3+m.listH() {
 		t.Fatalf("cursor = %d", m.cursor)
 	}
-	m.cycle("layout")
+	press(m, "ctrl+l")
 	if m.prefs.layout != layoutColumns || pref("layout") != layoutColumns {
 		t.Errorf("layout not switched/persisted: %q / %q", m.prefs.layout, pref("layout"))
 	}
@@ -292,21 +292,44 @@ func TestLayoutTogglePersistsAndKeepsCommit(t *testing.T) {
 	if !strings.Contains(screen(m), "▌ "+m.current().short()) {
 		t.Error("selected row not on screen")
 	}
-	m.cycle("layout")
+	press(m, "ctrl+l")
 	if pref("layout") != layoutRows {
 		t.Error("layout not persisted back to rows")
+	}
+}
+
+// TestLayoutKeyOnlyInList: ctrl+l does nothing outside the list (the full
+// view has no layout of its own).
+func TestLayoutKeyOnlyInList(t *testing.T) {
+	m := testModel(t, 5)
+	press(m, "enter") // modeFull
+	if m.mode != modeFull {
+		t.Fatal("enter did not open the full view")
+	}
+	layout, saved := m.prefs.layout, pref("layout")
+	press(m, "ctrl+l")
+	if m.prefs.layout != layout || pref("layout") != saved {
+		t.Errorf("ctrl+l changed the layout from the full view: %q -> %q", layout, m.prefs.layout)
 	}
 }
 
 func TestResizeList(t *testing.T) {
 	m := testModel(t, 50)
 	h := m.listH()
-	press(m, "shift+right")
+	press(m, "shift+right", "shift+left") // the other axis: nothing
+	if m.listH() != h || pref("split-rows") != "" {
+		t.Errorf("rows: shift+left/right resized: list %d -> %d", h, m.listH())
+	}
+	press(m, "shift+down")
 	if m.listH() <= h || m.prefs.splitRows != 65 || pref("split-rows") != "65" {
 		t.Errorf("rows: list %d -> %d, split=%d (%q)", h, m.listH(), m.prefs.splitRows, pref("split-rows"))
 	}
 	m.cycle("layout")
 	w := m.listW()
+	press(m, "shift+up", "shift+down") // the other axis: nothing, and no scroll
+	if m.listW() != w || pref("split-columns") != "" || m.prevVP.YOffset() != 0 {
+		t.Errorf("columns: shift+up/down resized or scrolled: list %d -> %d", w, m.listW())
+	}
 	press(m, "shift+left")
 	if m.listW() >= w || m.prefs.splitColumns != 80 || pref("split-columns") != "80" || m.prevVP.Width() != m.detailsW()-2 {
 		t.Errorf("columns: list %d -> %d, split=%d", w, m.listW(), m.prefs.splitColumns)

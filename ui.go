@@ -61,9 +61,8 @@ type listKeys struct {
 	Open     key.Binding
 	NextFile key.Binding
 	PrevFile key.Binding
-	PrevUp   key.Binding
-	PrevDown key.Binding
 	DiffMode key.Binding
+	Layout   key.Binding
 	Shrink   key.Binding
 	Grow     key.Binding
 	All      key.Binding
@@ -84,8 +83,8 @@ func (k listKeys) ShortHelp() []key.Binding {
 func (k listKeys) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Filter, k.Fuzzy, k.Nav.Up, k.Nav.PageUp, k.Nav.Top},
-		{k.Open, k.NextFile, k.PrevFile, k.PrevUp},
-		{k.Shrink, k.DiffMode, k.Space},
+		{k.Open, k.NextFile, k.PrevFile},
+		{k.Shrink, k.DiffMode, k.Space, k.Layout},
 		{k.All, k.Pickaxe, k.Copy, k.Browse, k.Help, k.Quit},
 	}
 }
@@ -103,18 +102,19 @@ func defaultListKeys() listKeys {
 		Open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "full diff")),
 		NextFile: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next file")),
 		PrevFile: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab", "previous file")),
-		PrevUp:   key.NewBinding(key.WithKeys("shift+up"), key.WithHelp("⇧↑/⇧↓", "scroll the diff")),
-		PrevDown: key.NewBinding(key.WithKeys("shift+down")),
 		DiffMode: key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("^t", "diff mode")),
-		Shrink:   key.NewBinding(key.WithKeys("shift+left"), key.WithHelp("⇧←/⇧→", "resize the list")),
-		Grow:     key.NewBinding(key.WithKeys("shift+right")),
-		All:      key.NewBinding(key.WithKeys("ctrl+a"), key.WithHelp("^a", "all refs / current branch")),
-		Pickaxe:  key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("^g", "search the diffs (git log -S)")),
-		Space:    key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("^s", "whitespace")),
-		Copy:     key.NewBinding(key.WithKeys("ctrl+y"), key.WithHelp("^y", "copy the hash")),
-		Browse:   key.NewBinding(key.WithKeys("ctrl+o"), key.WithHelp("^o", "open the commit in the browser")),
-		Help:     helpBinding(true),
-		Quit:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc/q", "quit")),
+		Layout:   key.NewBinding(key.WithKeys("ctrl+l"), key.WithHelp("^l", "layout")),
+		// The divider moves along its own axis: ⇧↑/⇧↓ with the details under
+		// the list, ⇧←/⇧→ side by side (resizeKey).
+		Shrink:  key.NewBinding(key.WithKeys("shift+left", "shift+up"), key.WithHelp("⇧←/⇧→ ⇧↑/⇧↓", "resize the list")),
+		Grow:    key.NewBinding(key.WithKeys("shift+right", "shift+down")),
+		All:     key.NewBinding(key.WithKeys("ctrl+a"), key.WithHelp("^a", "all refs / current branch")),
+		Pickaxe: key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("^g", "search the diffs (git log -S)")),
+		Space:   key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("^s", "whitespace")),
+		Copy:    key.NewBinding(key.WithKeys("ctrl+y"), key.WithHelp("^y", "copy the hash")),
+		Browse:  key.NewBinding(key.WithKeys("ctrl+o"), key.WithHelp("^o", "open the commit in the browser")),
+		Help:    helpBinding(true),
+		Quit:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc/q", "quit")),
 	}
 }
 
@@ -735,8 +735,9 @@ func (m *model) tool() diffTool {
 	return pickTool(m.prefs.tool, m.deltaBin, m.hunkBin, m.prefs.ignoreWS)
 }
 
-// options is what the panel offers in the current view. The renderer and the
-// layout are chosen there and nowhere else; the rest keep their keys.
+// options is what the panel offers in the current view. The renderer is
+// chosen there and nowhere else; the layout also has ctrl+l, and the rest
+// keep their own keys.
 func (m *model) options() []option {
 	opts := m.diffPrefs().options()
 	if m.inFull() {
@@ -749,7 +750,7 @@ func (m *model) options() []option {
 		return 0
 	}
 	return append(opts,
-		option{id: "layout", label: "Layout", values: []string{layoutRows, layoutColumns}, cur: cur(m.prefs.layout == layoutColumns)},
+		option{id: "layout", label: "Layout", values: []string{layoutRows, layoutColumns}, cur: cur(m.prefs.layout == layoutColumns), key: "^l"},
 		option{id: "refs", label: "History", values: []string{"current branch", "all refs"}, cur: cur(m.opts.all), key: "^a"},
 	)
 }
@@ -801,6 +802,17 @@ func (m *model) setOption(id string, v int) tea.Cmd {
 
 // cycle moves a setting to its next value, for the keys that do so directly.
 func (m *model) cycle(id string) tea.Cmd { return m.setOption(id, nextValue(m.options(), id)) }
+
+// resizeKey moves the divider with the arrows of its own axis: ⇧↑/⇧↓ in the
+// rows layout, ⇧←/⇧→ in the columns layout (up and left shrink the list).
+// The other pair does nothing: the details scroll with the wheel only.
+func (m *model) resizeKey(msg tea.KeyPressMsg) tea.Cmd {
+	vertical := msg.Code == tea.KeyUp || msg.Code == tea.KeyDown
+	if vertical == m.columns() {
+		return nil
+	}
+	return m.resizeList(key.Matches(msg, m.keys.Grow))
+}
 
 // resizeList moves the divider between list and preview by one step.
 func (m *model) resizeList(grow bool) tea.Cmd {
@@ -994,18 +1006,12 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.resetPreview()
 	case key.Matches(msg, m.keys.DiffMode):
 		return m, m.cycle("diff")
+	case key.Matches(msg, m.keys.Layout):
+		return m, m.cycle("layout")
 	case key.Matches(msg, m.keys.Space):
 		return m, m.cycle("whitespace")
-	case key.Matches(msg, m.keys.Shrink):
-		return m, m.resizeList(false)
-	case key.Matches(msg, m.keys.Grow):
-		return m, m.resizeList(true)
-	case key.Matches(msg, m.keys.PrevUp):
-		m.prevVP.ScrollUp(3)
-		return m, nil
-	case key.Matches(msg, m.keys.PrevDown):
-		m.prevVP.ScrollDown(3)
-		return m, nil
+	case key.Matches(msg, m.keys.Shrink), key.Matches(msg, m.keys.Grow):
+		return m, m.resizeKey(msg)
 	case key.Matches(msg, m.keys.NextFile):
 		m.jumpFile(+1)
 		return m, nil

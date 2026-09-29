@@ -260,8 +260,10 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
     `┬`/`┴`). Compact rows: hash,
     relative date, subject. Falls back to rows under 60 columns without
     touching the saved setting.
-  - `shift+←/→` moves the divider in 5% steps (30-85% for the preview),
-    persisted per layout.
+  - The arrows of the divider's own axis move it in 5% steps (30-85% for
+    the preview), persisted per layout (`resizeKey`): `shift+↑/↓` in rows,
+    `shift+←/→` in columns; the other pair does nothing. The preview
+    scrolls with the mouse wheel only.
   - Merge subjects are faint; the working tree row is yellow italic.
 - **Filter**: whitespace-separated terms are ANDed. A plain term is a
   case-insensitive SUBSTRING (every occurrence is highlighted); `~term` is a
@@ -414,9 +416,9 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
   `?` opens the panel there too. `options()` lists the settings of the
   current view (the full view has no layout and no log scope) and `setOption`
   is the one place that changes one, for the panel and for the keys that kept
-  a shortcut (`ctrl+t`, `ctrl+s`, `ctrl+a`). The renderer and the layout are
-  chosen once, so they have no key: the panel is where they live. An earlier
-  overlay that only restyled the key list was tried and dropped; this one
+  a shortcut (`ctrl+t`, `ctrl+s`, `ctrl+a`, `ctrl+l` for the layout). The
+  renderer is chosen once, so it has no key: the panel is where it lives. An
+  earlier overlay that only restyled the key list was tried and dropped; this one
   earns its place with the options. The filter's `~word` hint lives on as a
   help-only binding.
 - **Settings** (`layout`, `diff`, `renderer`, `whitespace`, `refs`,

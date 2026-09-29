@@ -77,14 +77,14 @@ down the history.
 | `home`/`end` (`fn+←`/`fn+→` on a compact Mac keyboard) | jump to the newest / oldest commit |
 | `enter` | open the diff full screen |
 | `tab`/`shift+tab` | scroll the preview to the next / previous file |
-| `shift+↑`/`shift+↓`, mouse wheel over the preview | scroll the preview |
+| mouse wheel over the preview | scroll the preview |
 | mouse wheel over the list | move the selection |
 | left click | select a commit |
 | `ctrl+t` | diff mode: auto, side-by-side, single column |
 | panel: Diff renderer | render the diffs with [hunk](https://hunk.dev), the default, or with delta (remembered; delta also stands in while hunk is not installed). Choosing one that is not installed says `<name> not found`, in red, and changes nothing |
 | `ctrl+s` | show or ignore whitespace changes, like GitHub's "Hide whitespace" (`git show -w`, remembered); `[-w]` on the bottom edge while it is on |
-| panel: Layout | preview below (rows) / on the side (columns) |
-| `shift+←`/`shift+→` | shrink / grow the list |
+| `ctrl+l`, panel: Layout | preview below (rows) / on the side (columns) |
+| `shift+↑`/`shift+↓` (rows), `shift+←`/`shift+→` (columns) | shrink / grow the list |
 | `ctrl+a` | all refs / current branch (remembered; revisions on the command line go before it) |
 | `ctrl+g` | search the diffs: only commits that add or remove a text |
 | `ctrl+y` | copy the commit hash |
