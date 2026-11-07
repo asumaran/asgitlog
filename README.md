@@ -9,8 +9,8 @@ the pane you were in, and as a plain command in any shell.
 
 ![asgitlog demo: popup over herdr with the commit list, the diff of the selected commit, a filter and the full diff view](docs/demo.gif)
 
-- The list shows hash, author, subject, refs and date. With the preview on
-  the side it switches to hash, age and subject.
+- The list shows hash, author, email, subject, refs and date. With the
+  preview on the side it switches to hash, age, email and subject.
 - The preview has the commit header (hash, refs, author, date, files changed
   with `+added -removed` per file, full message) followed by the diff, side
   by side or in a single column.

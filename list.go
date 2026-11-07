@@ -4,12 +4,14 @@ package main
 // commit's search corpus) laid out for the list width at render time. Two
 // formats, tied to the layout:
 //
-//   - wide (rows layout): hash, author, subject, refs, date. The author column
-//     is as wide as the longest name loaded (up to 15). Refs only take the
-//     room they need, right-aligned against the date, and the subject gets
-//     everything else, so every column starts at the same place on every row.
-//     The email is not shown (the preview header has it) but stays searchable.
-//   - compact (columns layout): hash, relative date, subject. Author, refs and
+//   - wide (rows layout): hash, author, email, subject, refs, date. The author
+//     and email columns are as wide as the longest of each loaded (up to 15
+//     and 30). Refs only take the room they need, right-aligned against the
+//     date, and the subject gets everything else, so every column starts at
+//     the same place on every row. A narrow list drops the email first, then
+//     the author; both stay searchable.
+//   - compact (columns layout): hash, relative date, email, subject. The email
+//     goes when the subject would fall under minSubjW; author, refs and
 //     stats are in the preview header right next to it.
 
 import (
@@ -23,9 +25,10 @@ import (
 const (
 	gutterW    = 2 // "▌ " on the selected row
 	maxAuthorW = 15
+	maxEmailW  = 30
 	dateW      = 10
 	relDateW   = 4
-	minSubjW   = 24 // below this the wide format drops the author column
+	minSubjW   = 24 // below this a row drops the email, then (wide) the author
 )
 
 // seg is a run of text with one style. off is the byte offset of text in the
@@ -137,6 +140,7 @@ type rowLayout struct {
 	width   int
 	hashW   int   // widest short hash loaded (git lengthens ambiguous ones)
 	authorW int   // widest author name loaded, capped at maxAuthorW
+	emailW  int   // widest author email loaded, capped at maxEmailW
 	compact bool  // columns layout
 	now     int64 // reference for relative dates
 }
@@ -169,17 +173,33 @@ func rowSegs(c *commit, l rowLayout, selected bool) []seg {
 		}
 		row = append(row, fitSegs([]seg{{text: age, st: stDate, off: -1}}, relDateW, true)...)
 		row = append(row, space)
-		row = append(row, fitSegs(subject, rest-relDateW-1, false)...)
+		subjW := rest - relDateW - 1
+		if l.emailW > 0 && subjW-(l.emailW+1) >= minSubjW {
+			row = append(row, fitSegs([]seg{{text: c.email(), st: stEmail, off: c.oEmail}}, l.emailW, false)...)
+			row = append(row, space)
+			subjW -= l.emailW + 1
+		}
+		row = append(row, fitSegs(subject, subjW, false)...)
 		return fitSegs(row, l.width, false)
 	}
 
-	// A narrow list drops the author.
-	subjW := rest - (l.authorW + 1) - (dateW + 1)
-	if l.authorW > 0 && subjW >= minSubjW {
+	// A narrow list drops the email first, then the author.
+	subjW := rest - (l.authorW + 1) - (l.emailW + 1) - (dateW + 1)
+	withAuthor, withEmail := l.authorW > 0, l.emailW > 0 && subjW >= minSubjW
+	if !withEmail {
+		subjW = rest - (l.authorW + 1) - (dateW + 1)
+		withAuthor = withAuthor && subjW >= minSubjW
+	}
+	if !withAuthor {
+		subjW = rest - (dateW + 1)
+	}
+	if withAuthor {
 		row = append(row, fitSegs([]seg{{text: c.author(), st: stAuthor, off: c.oAuthor}}, l.authorW, false)...)
 		row = append(row, space)
-	} else {
-		subjW = rest - (dateW + 1)
+	}
+	if withEmail {
+		row = append(row, fitSegs([]seg{{text: c.email(), st: stEmail, off: c.oEmail}}, l.emailW, false)...)
+		row = append(row, space)
 	}
 	// Refs take what they need, up to 45% of the subject area.
 	if refs := refSegs(c); len(refs) > 0 && subjW > 12 {

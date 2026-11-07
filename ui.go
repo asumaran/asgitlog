@@ -39,6 +39,7 @@ var (
 	// list columns and preview header, after git's own palette
 	stHash      = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	stAuthor    = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+	stEmail     = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	stDate      = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	stKey       = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 	stAdded     = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
@@ -203,6 +204,7 @@ type model struct {
 	commits  []commit
 	hashW    int // widest short hash loaded so far
 	authorW  int // widest author name loaded so far, capped
+	emailW   int // widest author email loaded so far, capped
 	loading  bool
 	logErr   string
 	logGen   int
@@ -304,7 +306,7 @@ func (m *model) startLog() tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.logGen++
 	m.logCh, m.stopLog = streamLog(ctx, m.opts, m.logGen), cancel
-	m.commits, m.hits, m.hashW, m.authorW = nil, nil, 0, 0
+	m.commits, m.hits, m.hashW, m.authorW, m.emailW = nil, nil, 0, 0, 0
 	m.cursor, m.top = 0, 0
 	m.loading, m.logErr = true, ""
 	return waitLog(m.logCh)
@@ -326,6 +328,7 @@ func (m *model) addCommits(batch []commit) {
 	for i := range batch {
 		m.hashW = max(m.hashW, len(batch[i].short()))
 		m.authorW = max(m.authorW, min(maxAuthorW, ansi.StringWidth(batch[i].author())))
+		m.emailW = max(m.emailW, min(maxEmailW, ansi.StringWidth(batch[i].email())))
 	}
 	if m.filtering() {
 		m.hits = append(m.hits, filterCommits(m.commits, nil, from, queryTerms(m.query, false))...)
@@ -505,7 +508,7 @@ func (m *model) resize() {
 }
 
 func (m *model) rowLayout() rowLayout {
-	return rowLayout{width: m.listW(), hashW: m.hashW, authorW: m.authorW, compact: m.columns(), now: time.Now().Unix()}
+	return rowLayout{width: m.listW(), hashW: m.hashW, authorW: m.authorW, emailW: m.emailW, compact: m.columns(), now: time.Now().Unix()}
 }
 
 // ---- preview ----

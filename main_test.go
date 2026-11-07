@@ -292,7 +292,7 @@ func TestNarrows(t *testing.T) {
 // ---- rows ----
 
 func wide(w int) rowLayout {
-	return rowLayout{width: w, hashW: 7, authorW: 12, now: 1767261600 + 3*86400}
+	return rowLayout{width: w, hashW: 7, authorW: 12, emailW: 15, now: 1767261600 + 3*86400}
 }
 func compact(w int) rowLayout { l := wide(w); l.compact = true; return l }
 
@@ -307,12 +307,9 @@ func TestRowWidthsAndColumns(t *testing.T) {
 		}
 	}
 
-	row := plainSegs(rowSegs(&c, wide(150), false))
-	if !strings.HasPrefix(row, "  0123456 Ada Lovelace feat(ui): añade el motor analítico ") {
-		t.Errorf("wide row starts with %q", row[:70])
-	}
-	if strings.Contains(row, "ada@example") {
-		t.Errorf("the email is not a list column: %q", row)
+	row := plainSegs(rowSegs(&c, wide(170), false))
+	if !strings.HasPrefix(row, "  0123456 Ada Lovelace ada@example.com feat(ui): añade el motor analítico ") {
+		t.Errorf("wide row starts with %q", row[:80])
 	}
 	// Refs take only the room they need, right before the date.
 	if !strings.HasSuffix(row, "  HEAD -> main, tag: v1.0, origin/main, refs/stash 05/03/2026") {
@@ -320,8 +317,11 @@ func TestRowWidthsAndColumns(t *testing.T) {
 	}
 
 	crow := plainSegs(rowSegs(&c, compact(60), false))
-	if !strings.HasPrefix(crow, "  0123456   3d feat(ui)") || strings.Contains(crow, "Ada") {
+	if !strings.HasPrefix(crow, "  0123456   3d ada@example.com feat(ui)") || strings.Contains(crow, "Ada") {
 		t.Errorf("compact row = %q", crow)
+	}
+	if crow := plainSegs(rowSegs(&c, compact(40), false)); !strings.HasPrefix(crow, "  0123456   3d feat(ui)") {
+		t.Errorf("a narrow compact row should drop the email: %q", crow)
 	}
 	if sel := plainSegs(rowSegs(&c, compact(60), true)); !strings.HasPrefix(sel, "▌ 0123456") {
 		t.Errorf("selected row = %q", sel)
@@ -332,7 +332,7 @@ func TestRowColumnsAreStable(t *testing.T) {
 	a := mustParse(t, rec("h", "abc1234", "Al", "a@b.c", "01/01/2026 00:00", "", "short"))
 	b := mustParse(t, rec("h", "abc12345", "A much longer author name", "long.email@example.com", "01/01/2026 00:00",
 		"refs/heads/x", "a subject long enough to be truncated by any reasonable list width, really, it just goes on and on and on"))
-	l := rowLayout{width: 120, hashW: 8, authorW: maxAuthorW}
+	l := rowLayout{width: 120, hashW: 8, authorW: maxAuthorW, emailW: 22}
 	ra, rb := plainSegs(rowSegs(&a, l, false)), plainSegs(rowSegs(&b, l, false))
 	col := func(row, needle string) int { return ansi.StringWidth(row[:strings.Index(row, needle)]) }
 	if col(ra, "short") != col(rb, "a subject") {
@@ -345,8 +345,11 @@ func TestRowColumnsAreStable(t *testing.T) {
 
 func TestNarrowWideRowDropsAuthor(t *testing.T) {
 	c := sampleCommit(t)
-	if row := plainSegs(rowSegs(&c, wide(70), false)); !strings.Contains(row, "Ada") {
-		t.Errorf("70 cols should keep the author: %q", row)
+	if row := plainSegs(rowSegs(&c, wide(80), false)); !strings.Contains(row, "ada@example.com") {
+		t.Errorf("80 cols should keep the email: %q", row)
+	}
+	if row := plainSegs(rowSegs(&c, wide(70), false)); !strings.Contains(row, "Ada") || strings.Contains(row, "@") {
+		t.Errorf("70 cols should keep the author and drop the email: %q", row)
 	}
 	if row := plainSegs(rowSegs(&c, wide(50), false)); strings.Contains(row, "Ada") || !strings.Contains(row, "05/03/2026") {
 		t.Errorf("50 cols should drop the author: %q", row)
@@ -857,8 +860,8 @@ func TestRunDump(t *testing.T) {
 		t.Fatalf("got %d rows, want one per commit:\n%s", len(rows), strings.Join(rows, "\n"))
 	}
 	for i, subject := range subjects {
-		if !strings.Contains(rows[i], " Ada "+subject+" ") || !strings.HasSuffix(rows[i], " 05/03/2026") {
-			t.Errorf("row %d is %q, want the author, %q and the date", i, rows[i], subject)
+		if !strings.Contains(rows[i], " Ada ada@x.io "+subject+" ") || !strings.HasSuffix(rows[i], " 05/03/2026") {
+			t.Errorf("row %d is %q, want the author, the email, %q and the date", i, rows[i], subject)
 		}
 	}
 	if !strings.Contains(rows[3], "tag: v1") {

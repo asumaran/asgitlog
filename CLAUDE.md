@@ -253,13 +253,14 @@ Keybinding (user config): `plugin_action` `asumaran.asgitlog.open` →
     default was tried while the input sat below the list; with the input on
     top it read backwards and was dropped.)
   - Rows layout (details below, horizontal `├─┤` divider). Wide rows: hash, author (as wide as
-    the longest name loaded, max 15), subject, refs (only the room they need,
-    up to 45% of the subject area, right-aligned against the date), date. No
-    email column; it stays searchable. A narrow list drops the author.
+    the longest name loaded, max 15), email (as wide as the longest loaded,
+    max 30), subject, refs (only the room they need, up to 45% of the subject
+    area, right-aligned against the date), date. A narrow list drops the
+    email first, then the author; both stay searchable.
   - Columns layout (details beside, vertical divider tied into the edges with
-    `┬`/`┴`). Compact rows: hash,
-    relative date, subject. Falls back to rows under 60 columns without
-    touching the saved setting.
+    `┬`/`┴`). Compact rows: hash, relative date, email (dropped when the
+    subject would fall under 24 cells), subject. Falls back to rows under 60
+    columns without touching the saved setting.
   - The arrows of the divider's own axis move it in 5% steps (30-85% for
     the preview), persisted per layout (`resizeKey`): `shift+↑/↓` in rows,
     `shift+←/→` in columns; the other pair does nothing. The preview

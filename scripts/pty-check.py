@@ -204,9 +204,9 @@ t.pump(0.5)
 f0 = t.frame(); dump("initial frame (rows layout)", f0)
 check(f0[0].startswith("╭─") and f0[INPUT].startswith("│ ") and "/repo  main" in f0[HELP] and f0[HELP].rstrip("│ ").endswith("f1 options"), "repo summary at the foot, the panel key at its right end: %r" % f0[HELP][-60:])
 check(all(len(l) == COLS for l in f0), "every line spans the full width")
-check(f0[NEWEST].startswith("│▌ " + HEAD + " Ada Lovelace Merge branch 'side'"), "newest commit first, wide row: hash, author, subject (no email)")
+check(f0[NEWEST].startswith("│▌ " + HEAD + " Ada Lovelace ada@example.com Merge branch 'side'"), "newest commit first, wide row: hash, author, email, subject")
 check(re.search(r"  HEAD -> main \d\d/\d\d/\d{4}│$", f0[NEWEST]) is not None, "refs take what they need, right before the date: %r" % f0[NEWEST][-32:])
-check(f0[NEWEST + 1].startswith("│  " + SIDE + " Ada Lovelace feat: side work") and "side" in f0[NEWEST + 1][-21:], "older commits go down")
+check(f0[NEWEST + 1].startswith("│  " + SIDE + " Ada Lovelace ada@example.com feat: side work") and "side" in f0[NEWEST + 1][-21:], "older commits go down")
 check("tag: v1.0" in f0[NEWEST + 3], "tag decoration on its commit")
 check(counter(f0, "%d/%d" % (ON_MAIN, ON_MAIN)) and f0[INPUT].startswith("│ " + PROMPT), "input above the list, counter on its edge")
 check(f0[LIST_TOP - 1].startswith("├─") and re.fullmatch(r"├─+ %d/%d ─┤" % (ON_MAIN, ON_MAIN), f0[DIVIDER]) and len(f0[DIVIDER]) == COLS,
@@ -282,7 +282,8 @@ check(f[INPUT].startswith("│ " + PROMPT + " ") and "zz" not in f[INPUT] and no
 sel = selected(f)
 check(len(sel) == 1 and NEEDLE in sel[0], "cursor stays on the same commit across the layout change")
 check(f[INPUT].startswith("│ " + PROMPT) and counter(f, "%d/%d" % (ON_MAIN, ON_MAIN)), "columns: same input, list top-down")
-check(re.match(r"^│  [0-9a-f]+ +\d+(mo|[ymwdh]) (feat|fix): ", f[LIST_TOP]) is not None and "Ada" not in f[LIST_TOP].split("│")[1], "compact rows: hash, relative date, subject: %r" % f[LIST_TOP][:40])
+# The list is too narrow here for the email column (the unit tests cover it).
+check(re.match(r"^│  [0-9a-f]+ +\d+(mo|[ymwdh]) (feat|fix): ", f[LIST_TOP]) is not None and "@" not in f[LIST_TOP].split("│")[1], "compact rows: hash, relative date, subject; no room for the email: %r" % f[LIST_TOP][:40])
 col = f[LIST_TOP - 1].index("┬")
 check(f[BOTTOM][col] == "┴" and all(l[col] == "│" for l in f[LIST_TOP:BOTTOM]) and f[LIST_TOP - 1].replace("─", "") == "├┬┤",
       "a vertical divider splits the main section, list | details, under a plain edge")
