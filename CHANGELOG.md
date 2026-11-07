@@ -1,3 +1,8 @@
+## v0.12.0 (2026-11-06)
+
+* feat(ui): show the author email in the list (f61f5d2)
+* feat(ui): resize along the divider's axis, ctrl+l layout (27bbe3c)
+
 ## v0.11.0 (2026-09-24)
 
 * feat(ui): move the context to the foot next to the panel key (55ae5e2)
